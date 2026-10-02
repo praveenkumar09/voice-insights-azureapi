@@ -41,6 +41,7 @@ public class RecommendationOrchestrationService {
     private final RecommendationEventBus eventBus;
     private final CustomerProfileStore profileStore;
     private final RecommendationAgentService agentService;
+    private final AdvicePackService advicePackService;
     private final ExecutorService executor = new ThreadPoolExecutor(
             4, MAX_CONCURRENT_RUNS, 60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(200));
 
@@ -48,12 +49,14 @@ public class RecommendationOrchestrationService {
                                                RecommendationStore store,
                                                RecommendationEventBus eventBus,
                                                CustomerProfileStore profileStore,
-                                               RecommendationAgentService agentService) {
+                                               RecommendationAgentService agentService,
+                                               AdvicePackService advicePackService) {
         this.graphFactory = graphFactory;
         this.store = store;
         this.eventBus = eventBus;
         this.profileStore = profileStore;
         this.agentService = agentService;
+        this.advicePackService = advicePackService;
     }
 
     public String startRun(String customerProfileId) {
@@ -87,6 +90,8 @@ public class RecommendationOrchestrationService {
 
             store.markRunStatus(runId, "COMPLETED", null);
             log.info("Recommendation run {} completed in {} ms", runId, Duration.between(startedAt, Instant.now()).toMillis());
+            // Have the advice pack ready by the time the advisor opens it.
+            advicePackService.generateAsync(runId);
         } catch (Exception e) {
             store.markRunStatus(runId, "FAILED", e.getMessage());
             eventBus.publish(runId, RecommendationEvent.runFailed(e.getMessage()));

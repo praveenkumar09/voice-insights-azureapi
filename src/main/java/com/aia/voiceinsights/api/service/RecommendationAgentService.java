@@ -932,6 +932,11 @@ public class RecommendationAgentService {
 
     // ── Shared LLM call helper ───────────────────────────────────────────────
 
+    /** The same retrying, timed-out JSON call the pipeline agents use, for other services (e.g. the advice pack). */
+    public <T> T callJson(String systemPrompt, String userMessage, Class<T> type) {
+        return call(systemPrompt, userMessage, type);
+    }
+
     private <T> T call(String systemPrompt, String userMessage, Class<T> type) {
         Exception lastError = null;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {

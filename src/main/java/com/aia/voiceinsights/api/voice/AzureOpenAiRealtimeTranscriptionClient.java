@@ -6,7 +6,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashMap;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Queue;
@@ -127,19 +131,52 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     }
 
     /** {@code pcm16}: raw 24kHz, 16-bit mono PCM samples (see voice-insights-ui's useVoiceCapture hook). */
-    public void sendAudioChunk(byte[] pcm16) {
+    public synchronized void sendAudioChunk(byte[] pcm16) {
         if (!connected) {
             pendingAudio.add(pcm16);
             return;
         }
         sendNow(pcm16);
+        segment.add(pcm16);
         if (shouldCut(pcm16)) commit();
+    }
+
+    // ── Segments awaiting a transcript. Azure occasionally reports "Input transcription failed" for an item; the
+    //    audio is kept until the transcript arrives so that a failed segment is sent again instead of silently
+    //    losing the words in it. ─────────────────────────────────────────────────────────────────────────────
+    private static final int MAX_RETRIES = 2;
+
+    private static final class Pending {
+        final List<byte[]> audio;
+        final int attempts;
+        String itemId;
+        Pending(List<byte[]> audio, int attempts) { this.audio = audio; this.attempts = attempts; }
+    }
+
+    /** Audio appended since the last commit — the segment being spoken right now. */
+    private final List<byte[]> segment = new ArrayList<>();
+    /** Committed, waiting for Azure to say which item it became (the "committed" event arrives in commit order). */
+    private final ArrayDeque<Pending> awaitingId = new ArrayDeque<>();
+    /** Committed and identified, waiting for its transcript. */
+    private final Map<String, Pending> byItem = new HashMap<>();
+
+    private synchronized void retry(Pending failed) {
+        if (failed == null || failed.attempts >= MAX_RETRIES) {
+            System.err.println("[voice-stt] giving up on a segment after " + (failed == null ? 0 : failed.attempts) + " retries");
+            return;
+        }
+        System.out.println("[voice-stt] retrying a failed segment (attempt " + (failed.attempts + 1) + ")");
+        send(Map.of("type", "input_audio_buffer.clear")); // drops the audio of whatever is being spoken now…
+        for (byte[] c : failed.audio) sendNow(c);
+        awaitingId.addLast(new Pending(failed.audio, failed.attempts + 1));
+        send(Map.of("type", "input_audio_buffer.commit"));
+        for (byte[] c : segment) sendNow(c); // …which is put straight back after the retried segment
     }
 
     // ── Chunking: cut a segment at the first short quiet gap once it is long enough, or at a hard cap ──────────
 
     private static final int FRAME_SAMPLES = 480;     // 20 ms at 24 kHz
-    private static final int MIN_SPEECH_MS = 400;     // below this a segment is just noise — never transcribed
+    private static final int MIN_SPEECH_MS = 700;     // below this a segment is just noise (a leaked sliver of background) — cleared, never transcribed
     private static final int MIN_TURN_MS = 2000;      // do not cut sooner than this
     private static final int GAP_MS = 150;            // a quiet gap this long counts as a pause
     private static final int MAX_TURN_MS = 9000;      // cut here even without a pause
@@ -168,6 +205,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         boolean cut = speechMs >= MIN_SPEECH_MS && ((gapMs >= GAP_MS && turnMs >= MIN_TURN_MS) || turnMs >= MAX_TURN_MS);
         if (!cut && speechMs < MIN_SPEECH_MS && turnMs >= IDLE_CLEAR_MS) {
             send(Map.of("type", "input_audio_buffer.clear"));
+            segment.clear();
             turnMs = speechMs = gapMs = 0;
         }
         return cut;
@@ -178,8 +216,19 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     }
 
     public synchronized void commit() {
+        // Committing a few hundred milliseconds of room noise makes the model invent a sentence (it expects insurance
+        // talk). Stop and pause also call this, so anything without real speech in it is discarded instead.
+        if (speechMs < MIN_SPEECH_MS) {
+            if (turnMs > 0) System.out.println("[voice-stt] discarded " + turnMs + "ms (" + speechMs + "ms speech) — too little to transcribe");
+            send(Map.of("type", "input_audio_buffer.clear"));
+            segment.clear();
+            turnMs = speechMs = gapMs = 0;
+            return;
+        }
         System.out.println("[voice-stt] cut: " + turnMs + "ms (" + speechMs + "ms speech)");
         turnMs = speechMs = gapMs = 0;
+        awaitingId.addLast(new Pending(new ArrayList<>(segment), 0));
+        segment.clear();
         send(Map.of("type", "input_audio_buffer.commit"));
     }
 
@@ -226,11 +275,21 @@ public class AzureOpenAiRealtimeTranscriptionClient {
                     String delta = root.path("delta").asText("");
                     if (!delta.isBlank()) listener.onPartialTranscript(delta);
                 }
-                case "input_audio_buffer.speech_started", "input_audio_buffer.speech_stopped",
-                     "input_audio_buffer.committed" -> System.out.println("[voice-stt] " + type);
-                case "conversation.item.input_audio_transcription.failed" ->
-                        System.err.println("[voice-stt] transcription FAILED: " + json);
+                case "input_audio_buffer.committed" -> {
+                    synchronized (this) {
+                        Pending p = awaitingId.pollFirst();
+                        String id = root.path("item_id").asText("");
+                        if (p != null && !id.isEmpty()) { p.itemId = id; byItem.put(id, p); }
+                    }
+                }
+                case "conversation.item.input_audio_transcription.failed" -> {
+                    System.err.println("[voice-stt] transcription FAILED: " + root.path("error").path("message").asText(json));
+                    Pending failed;
+                    synchronized (this) { failed = byItem.remove(root.path("item_id").asText("")); }
+                    retry(failed);
+                }
                 case "conversation.item.input_audio_transcription.completed" -> {
+                    synchronized (this) { byItem.remove(root.path("item_id").asText("")); }
                     String transcript = root.path("transcript").asText("");
                     System.out.println("[voice-stt] completed (" + transcript.length() + " chars)");
                     if (!transcript.isBlank()) listener.onFinalTranscript(transcript);
