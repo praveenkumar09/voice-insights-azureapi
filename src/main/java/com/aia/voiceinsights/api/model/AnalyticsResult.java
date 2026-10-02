@@ -14,8 +14,18 @@ public record AnalyticsResult(
     List<DayPoint> trend,
     List<AgentRow> agents,
     List<Lead> leadsToFollowUp,
-    List<String> takeaways
+    List<String> takeaways,
+    Ops ops,
+    Previous previous,
+    List<Integer> activity
 ) {
+    /** How the product is performing operationally: speed, advisor paperwork, and how conversations are captured. */
+    public record Ops(double avgAnalysisSeconds, double medianAnalysisSeconds, int packsGenerated, int packsReviewed,
+                      int liveCount, int debriefCount) {}
+
+    /** The same headline figures for the equal-length period just before this one, for "vs previous" deltas. */
+    public record Previous(int conversations, int analysed, int hot, int recommendations, double avgBuyingSignal) {}
+
     public record Totals(int conversations, int analysed, int recommendations, double avgBuyingSignal, double avgSentiment) {}
 
     /** Buying-signal buckets: hot >= 70, warm 40-69, cold < 40. */

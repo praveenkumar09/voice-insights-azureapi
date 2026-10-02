@@ -7,7 +7,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /** One advice pack per recommendation run, kept as JSONB in the same schema as the run itself. */
@@ -44,6 +46,14 @@ public class AdvicePackStore {
         } catch (Exception e) {
             throw new RuntimeException("Failed to read the advice pack for run " + runId, e);
         }
+    }
+
+    /** runId -> whether the advisor has signed that run's pack off (admin dashboard completion figures). */
+    public Map<String, Boolean> reviewedByRun() {
+        Map<String, Boolean> out = new HashMap<>();
+        jdbc.query("SELECT run_id, jsonb_typeof(pack_json->'review') = 'object' FROM %s.advice_packs".formatted(schema),
+                rs -> { out.put(rs.getString(1), rs.getBoolean(2)); });
+        return out;
     }
 
     public void save(String runId, AdvicePack pack) {

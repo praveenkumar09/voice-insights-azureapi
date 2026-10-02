@@ -9,6 +9,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -178,6 +179,16 @@ public class RecommendationStore {
         } catch (Exception e) {
             throw new RuntimeException("Failed to deserialize " + agentKey + " output for run " + runId, e);
         }
+    }
+
+    /** How long each completed run took, in seconds: runId -> seconds (time-to-insight on the admin dashboard). */
+    public Map<String, Double> completedRunSeconds() {
+        Map<String, Double> out = new HashMap<>();
+        jdbc.query("""
+                SELECT run_id, EXTRACT(EPOCH FROM (completed_at - started_at))
+                FROM %s.recommendation_runs WHERE status = 'COMPLETED' AND completed_at IS NOT NULL
+                """.formatted(schema), rs -> { out.put(rs.getString(1), rs.getDouble(2)); });
+        return out;
     }
 
     /** Latest completed run per customer profile: profileId -> runId (analytics and "has a recommendation" checks). */
