@@ -53,6 +53,22 @@ public class ProductVectorSearchService {
         this.schema = schema;
     }
 
+    private volatile List<String> cachedNames = List.of();
+    private volatile long namesLoadedAt = 0;
+
+    /** The exact names of the products in the catalogue (cached for ten minutes). */
+    public List<String> productNames() {
+        if (System.currentTimeMillis() - namesLoadedAt > 600_000 || cachedNames.isEmpty()) {
+            try {
+                cachedNames = jdbc.queryForList("SELECT DISTINCT product_name FROM %s.product_chunks WHERE product_name IS NOT NULL ORDER BY product_name".formatted(schema), String.class);
+                namesLoadedAt = System.currentTimeMillis();
+            } catch (Exception ignored) {
+                // keep whatever was loaded before
+            }
+        }
+        return cachedNames;
+    }
+
     /** Embeds {@code query} and returns the top matching product chunks above the similarity threshold. */
     public List<ProductChunkMatch> search(String query) {
         float[] queryEmbedding = embeddingModel.embed(query);

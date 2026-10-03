@@ -97,8 +97,10 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         String modeParam = org.springframework.web.util.UriComponentsBuilder.fromUri(wsSession.getUri())
                 .build().getQueryParams().getFirst("mode");
         boolean debrief = "debrief".equalsIgnoreCase(modeParam);
+        // ?mode=juno: the AI host (Juno) is talking with the customer; it is analysed like a live conversation.
+        boolean juno = "juno".equalsIgnoreCase(modeParam);
         CustomerProfile fresh = new CustomerProfile();
-        fresh.setCaptureMode(debrief ? "DEBRIEF" : "LIVE");
+        fresh.setCaptureMode(debrief ? "DEBRIEF" : juno ? "JUNO" : "LIVE");
         CustomerProfile profile = profileStore.save(fresh);
         VoiceSession vs = new VoiceSession(profile, debrief);
         sessions.put(wsSession.getId(), vs);
@@ -120,9 +122,15 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
 
     /** The context prompt plus the name hint list — the model spells a name correctly far more often when it has seen it. */
     private String transcriptionPrompt() {
+        return transcriptionPrompt("");
+    }
+
+    /** {@code dynamic}: what is happening right now (e.g. a name is about to be said) — it goes first, as it matters most. */
+    private String transcriptionPrompt(String dynamic) {
         String base = transcriptionPromptBase == null ? "" : transcriptionPromptBase.trim().replaceAll("\\s+", " ");
         String hints = nameHints == null ? "" : nameHints.trim().replaceAll("\\s+", " ");
-        String full = hints.isEmpty() ? base : (base.isEmpty() ? "" : base + " ") + "Names and terms that may come up: " + hints;
+        String head = dynamic == null || dynamic.isBlank() ? "" : dynamic.trim() + " ";
+        String full = head + (hints.isEmpty() ? base : (base.isEmpty() ? "" : base + " ") + "Names and terms that may come up: " + hints);
         if (full.length() <= MAX_PROMPT_CHARS) return full;
         int cut = full.lastIndexOf(' ', MAX_PROMPT_CHARS);
         String trimmed = full.substring(0, cut > 0 ? cut : MAX_PROMPT_CHARS).replaceAll("[,\\s]+$", "");
@@ -141,11 +149,12 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                         String running = vs.partial.toString();
                         if (!running.isEmpty() && text.startsWith(running)) vs.partial.setLength(0); // already cumulative
                         vs.partial.append(text);
-                        sendJsonQuiet(wsSession, Map.of("type", "partial_transcript", "text", vs.partial.toString()));
+                        sendJsonQuiet(wsSession, Map.of("type", "partial_transcript", "text", redact(vs.partial.toString())));
                     }
 
                     @Override
-                    public void onFinalTranscript(String text) {
+                    public void onFinalTranscript(String raw) {
+                        String text = redact(raw); // ID and card numbers are never stored or shown
                         vs.reconnectAttempts = 0; // a real transcript flowed — the connection is healthy again
                         vs.partial.setLength(0);
                         vs.transcript.append(text).append(" ");
@@ -182,6 +191,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                                 delaySeconds, TimeUnit.SECONDS);
                     }
                 });
+        if ("JUNO".equals(vs.profile.getCaptureMode())) vs.transcriptionClient.setConversational(true);
         vs.transcriptionClient.connect().exceptionally(ex -> {
             sendJsonQuiet(wsSession, Map.of("type", "error", "message", "Failed to connect to Azure OpenAI realtime: " + ex.getMessage()));
             return null;
@@ -209,6 +219,14 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             vs.transcriptionClient.commit();
             return;
         }
+        // "agent_say": Juno spoke. Its words go into the transcript, labelled, so the customer's short answers
+        // ("two, a boy and a girl") are analysed together with the question they answer.
+        if ("agent_say".equals(node.path("type").asText("")) && "JUNO".equals(vs.profile.getCaptureMode())) {
+            String said = node.path("text").asText("").strip();
+            if (!said.isEmpty() && said.length() < 600) vs.transcript.append("\n[Juno] ").append(said).append("\n[Customer] ");
+            if (!said.isEmpty() && vs.transcriptionClient != null) vs.transcriptionClient.updatePrompt(transcriptionPrompt(nameContext(vs, said)));
+            return;
+        }
         if ("stop".equals(node.path("type").asText(""))) {
             // Safety flush: server_vad auto-commits at real pauses, but if the
             // agent stops mid-utterance (no pause yet when they hit stop),
@@ -224,10 +242,13 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         if (vs == null) return;
         vs.intentionalClose = true; // the browser side is gone either way — never attempt to reconnect after this
         if (vs.transcriptionClient != null) vs.transcriptionClient.close();
+        // A Juno conversation that was abandoned (page closed, consent never completed) keeps nothing.
+        if (!vs.finalized && "JUNO".equals(vs.profile.getCaptureMode())) profileStore.delete(vs.profile.getId());
     }
 
     private void finalizeSession(WebSocketSession wsSession, VoiceSession vs) {
         vs.intentionalClose = true;
+        vs.finalized = true;
 
         // Give Azure OpenAI a moment to flush the transcription.completed event for
         // the final (safety-flush) commit above.
@@ -303,10 +324,47 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         }
     }
 
+    private static final java.util.regex.Pattern NRIC = java.util.regex.Pattern.compile("\\b[STFGMstfgm](?:[\\s-]?\\d){7,9}(?:[\\s-]?[A-Za-z0-9])?\\b");
+    private static final java.util.regex.Pattern CARD = java.util.regex.Pattern.compile("\\b(?:\\d[ .,-]{0,2}){13,25}\\b");
+
+    /** Sensitive identifiers (NRIC/FIN and card numbers) are removed from what is stored and shown. */
+    static String redact(String t) {
+        if (t == null) return "";
+        return CARD.matcher(NRIC.matcher(t).replaceAll("[ID number removed]")).replaceAll("[card number removed]");
+    }
+
+    private static final java.util.regex.Pattern NAME_TALK = java.util.regex.Pattern.compile(
+            "\\b(name|names|family|children|child|kids|wife|husband|partner|spouse|son|daughter|parents?|mother|father|live with|support)\\b",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /**
+     * What the speech model should know for the answer Juno is waiting for: if Juno just asked about names or family,
+     * personal names are coming, and the names already heard keep their spelling consistent through the conversation.
+     */
+    private String nameContext(VoiceSession vs, String junoLine) {
+        StringBuilder sb = new StringBuilder();
+        if (NAME_TALK.matcher(junoLine).find()) {
+            sb.append("The speaker is about to say personal names (their own or family members', Indian, Malay or Chinese in Singapore).");
+        }
+        java.util.LinkedHashSet<String> known = new java.util.LinkedHashSet<>();
+        if (vs.profile.getCustomerName() != null) known.add(vs.profile.getCustomerName());
+        try {
+            var snap = vs.profile.getLiveInsights();
+            var map = snap == null || snap.latest() == null ? null : snap.latest().lifeMap();
+            if (map != null && map.people() != null) map.people().forEach(p -> { if (p.name() != null) known.add(p.name()); });
+        } catch (Exception ignored) {
+            // hints only
+        }
+        if (!known.isEmpty()) sb.append(" Names already mentioned: ").append(String.join(", ", known)).append(".");
+        return sb.toString().strip();
+    }
+
     private static class VoiceSession {
         final CustomerProfile profile;
         volatile AzureOpenAiRealtimeTranscriptionClient transcriptionClient;
         volatile boolean intentionalClose = false;
+        /** Set once the session has been finalized (the conversation completed): an unfinished Juno session is discarded. */
+        volatile boolean finalized = false;
         volatile int reconnectAttempts = 0;
         volatile boolean copilotDirty = false;
         final LiveCopilotService.State copilotState;

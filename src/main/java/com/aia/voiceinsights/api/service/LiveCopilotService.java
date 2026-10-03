@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.azure.openai.AzureOpenAiChatOptions;
 import org.springframework.ai.azure.openai.AzureOpenAiResponseFormat;
@@ -23,6 +24,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Real-time "advisor copilot": while the conversation is still going, reads
@@ -45,6 +47,8 @@ public class LiveCopilotService {
     private static final int EXCERPT_CHARS = 170;
     /** Only the tail of a long call is sent to the model — keeps latency flat as the call grows. */
     private static final int MAX_TRANSCRIPT_CHARS = 6000;
+    /** The "ask next" call looks closely at roughly the last few turns. */
+    private static final int RECENT_CHARS = 700;
 
     private static final String SYSTEM_PROMPT = ("""
             You are a real-time copilot for an AIA insurance advisor, reading a live,
@@ -61,7 +65,8 @@ public class LiveCopilotService {
               "lifeMap": {
                 "people": [ {"relation": "Wife|Husband|Partner|Daughter|Son|Child|Mother|Father|Parent|Sibling, or a short free-text relation such as Mother-in-law, Grandmother, Uncle", "name": "first name ONLY if said, else null", "said": "the customer's exact words mentioning them, max 12 words"} ],
                 "dreams": [ {"label": "max 4 words, e.g. Daughter's university", "forRelation": "the ONE person it is mainly about (a relation above), or Self", "said": "exact words, max 12 words"} ],
-                "worries": [ {"label": "max 4 words, e.g. Family history of cancer", "forRelation": "a relation above, or Self", "said": "exact words, max 12 words"} ]
+                "worries": [ {"label": "max 4 words, e.g. Family history of cancer", "forRelation": "a relation above, or Self", "said": "exact words, max 12 words"} ],
+                "corrections": [ {"wrong": "a name or relation as you listed it before", "right": "what the customer says it actually is, exactly as they said it"} ]
               }
             }
             Rules:
@@ -71,6 +76,7 @@ public class LiveCopilotService {
             - Stability: you are given the PREVIOUS analysis. Keep scores, needs and questions the same unless the new transcript gives real evidence to change them — never re-rate from scratch.
             - nextQuestions: you are given facts ALREADY KNOWN, the questions currently suggested, and RETIRED questions. Keep a current question ONLY if it is still unanswered; replace answered ones with a NEW topic; never suggest anything about a known fact, and never repeat or rephrase a retired question. Fewer than 3 (even 0) is fine if nothing useful is left to ask.
             - lifeMap: ONLY what the CUSTOMER explicitly said about the people in their life, what they hope for, and what worries them. "said" must be copied EXACTLY from the transcript — never paraphrase. forRelation is Self for the customer's own hopes and worries AND for anything about the whole family together (e.g. retiring early, travelling as a family). Do not include the customer themself as a person, and do not invent anyone or anything. Max 5 people, 4 dreams, 4 worries. Keep the KNOWN LIFE MAP entries you are given (same labels) and only add what is newly said.
+            - corrections: ONLY when the customer explicitly says someone's name was wrong or mis-stated ("not Milo, my daughter is Neela", "it's Raja, not Hussein"). Give the wrong name exactly as listed in KNOWN LIFE MAP and the right one exactly as the customer said it. Never invent a correction. Otherwise an empty array.
             - complianceFlags: ONLY for statements by the advisor such as guaranteed returns, promises of approval or claim payout, misleading comparisons, pressure tactics, or advice beyond suitability. Empty array if none. Never flag the customer.
             """).formatted(NeedTaxonomy.asPromptList());
 
@@ -91,10 +97,58 @@ public class LiveCopilotService {
               (guarantees, pressure, promises). Never flag the customer.
             """;
 
+    /**
+     * Live mode only: a small, dedicated call whose single job is the next thing the advisor should say. It sees the
+     * customer's latest words up close, so the first question always answers what was JUST said instead of drifting
+     * back to a generic checklist.
+     */
+    private static final String ASK_PROMPT = """
+            You coach an AIA insurance advisor LIVE during a customer meeting. You read the most recent part of a
+            speaker-unlabelled transcript (infer who speaks) and decide what the advisor should say next.
+
+            Respond with ONLY a JSON object, no markdown fences:
+            {"trigger": "the CUSTOMER's EXACT words (max 14 words, copied from the RECENT TRANSCRIPT) that your first question responds to, or null. Never quote the advisor.",
+             "kind": "followup|objection|clarify|gap|close",
+             "questions": ["first question", "second", "third"]}
+
+            Rules:
+            - questions[0] MUST respond directly to the most recent substantive thing the CUSTOMER said. Dig into it:
+              the amount, the timeline, who is affected, why it matters, what they already have. Example: customer says
+              "my mortgage worries me" -> "How many years are left on the mortgage, and roughly how much is outstanding?"
+            - If the customer asked a question, ask a short clarifying question that lets the advisor answer it well, or
+              start with a few words answering it. If they raised an objection (too expensive, need to think, spouse
+              must agree), questions[0] acknowledges it and probes it (kind "objection"). If they are ready to move
+              ahead (asks price, how to start, agrees), questions[0] is a closing step (kind "close").
+            - If the advisor has just said something risky or wrong (a guarantee, a promise) and the customer reacts with
+              doubt, questions[0] should address that doubt (kind "objection"), quoting the customer's reaction.
+            - Only when the latest customer words give nothing to follow up (small talk, advisor still speaking) use the
+              most valuable GAP: existing cover, budget, dependants, health, timeline, goals (kind "gap"; trigger null).
+            - questions[1] and [2]: other useful questions, preferably related to what the customer said earlier and
+              not yet explored; they may be gaps.
+            - Each question is a natural spoken line addressed to the customer, max 18 words. Never ask about anything in
+              FACTS ALREADY KNOWN or in what the customer already said anywhere in the transcript. Never repeat or
+              rephrase a RETIRED question. Do not give advice or promise anything; do not invent facts.
+            - Return 1 to 3 questions.
+            """;
+
+    private record AskLlm(String trigger, String kind, List<String> questions) {}
+
+    /** The transcript carries [Juno] (AI host) and [Customer] labels, because the conversation is hosted by an AI assistant. */
+    private static final String JUNO_ADDENDUM = """
+
+            MODE: JUNO. The transcript is labelled: lines starting [Juno] are the AI host AIA's Juno, the rest is
+            the CUSTOMER. Needs, sentiment, buying signal and the lifeMap describe the CUSTOMER and use only the
+            customer's words ("said" is copied exactly from the customer's own words). nextQuestions are things still
+            unknown that the human advisor should explore later. complianceFlags apply to what [Juno] said.
+            """;
+
     private record Llm(List<NeedTag> needs, Sentiment sentiment, BuyingSignal buyingSignal,
                        List<String> nextQuestions, List<ComplianceFlag> complianceFlags, LifeMapDraft lifeMap) {}
 
-    private record LifeMapDraft(List<Person> people, List<DraftConcern> dreams, List<DraftConcern> worries) {}
+    private record LifeMapDraft(List<Person> people, List<DraftConcern> dreams, List<DraftConcern> worries, List<Correction> corrections) {}
+
+    /** The customer said a name was wrong ("not Milo, her name is Neela"): {@code wrong} is replaced by {@code right}. */
+    private record Correction(String wrong, String right) {}
 
     private record DraftConcern(String label, String forRelation, String said) {}
 
@@ -123,7 +177,7 @@ public class LiveCopilotService {
     private final ObjectMapper mapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    public LiveCopilotService(ChatModel chatModel, ProductVectorSearchService productSearch) {
+    public LiveCopilotService(@Qualifier("azureOpenAiChatModel") ChatModel chatModel, ProductVectorSearchService productSearch) {
         this.chatModel = chatModel;
         this.productSearch = productSearch;
     }
@@ -133,8 +187,12 @@ public class LiveCopilotService {
         try {
             String tail = transcript.length() > MAX_TRANSCRIPT_CHARS
                     ? transcript.substring(transcript.length() - MAX_TRANSCRIPT_CHARS) : transcript;
+            // Live mode: the reactive "ask next" call runs alongside the main analysis, so it adds no latency.
+            CompletableFuture<AskLlm> askCall = state.debrief || "JUNO".equals(profile.getCaptureMode()) ? null
+                    : CompletableFuture.supplyAsync(() -> askNextCall(profile, tail, state));
             var response = chatModel.call(new Prompt(
-                    List.of(new SystemMessage(state.debrief ? SYSTEM_PROMPT + DEBRIEF_ADDENDUM : SYSTEM_PROMPT),
+                    List.of(new SystemMessage(state.debrief ? SYSTEM_PROMPT + DEBRIEF_ADDENDUM
+                                    : "JUNO".equals(profile.getCaptureMode()) ? SYSTEM_PROMPT + JUNO_ADDENDUM : SYSTEM_PROMPT),
                             new UserMessage(buildUserMessage(profile, tail, state))),
                     AzureOpenAiChatOptions.builder().responseFormat(JSON_FORMAT).build()));
             Llm llm = mapper.readValue(response.getResult().getOutput().getText(), Llm.class);
@@ -144,16 +202,60 @@ public class LiveCopilotService {
                     llm.needs() == null ? List.of() : llm.needs());
             Sentiment sentiment = smoothSentiment(prev == null ? null : prev.sentiment(), llm.sentiment());
             BuyingSignal buying = smoothBuying(prev == null ? null : prev.buyingSignal(), llm.buyingSignal());
-            List<String> questions = pickQuestions(state, llm.nextQuestions());
+            AskLlm ask = askCall == null ? null : askCall.join();
+            boolean reactive = ask != null && ask.questions() != null && !ask.questions().isEmpty();
+            List<String> questions = pickQuestions(state, reactive ? ask.questions() : llm.nextQuestions(), reactive);
+            AskContext askContext = null;
+            if (reactive && !questions.isEmpty() && similar(questions.get(0), ask.questions().get(0))) {
+                String trig = ask.trigger() == null || ask.trigger().isBlank() || "null".equalsIgnoreCase(ask.trigger()) ? null : ask.trigger().trim();
+                // The quoted words must really be in the transcript; otherwise show the question without a reason.
+                if (trig != null && !norm(tail).contains(norm(trig))) trig = null;
+                String kind = ask.kind() == null ? "followup" : ask.kind();
+                // A quoted question is almost always the advisor's own line — never attribute it to the customer.
+                if (trig != null && endsInQuestion(tail, trig)) trig = null;
+                if ("gap".equals(kind)) trig = null; // a gap question is not a reaction to anything the customer just said
+                askContext = new AskContext(trig, kind);
+            }
             List<ComplianceFlag> flags = mergeFlags(prev == null ? List.of() : prev.complianceFlags(),
                     llm.complianceFlags() == null ? List.of() : llm.complianceFlags());
 
             CopilotInsights out = new CopilotInsights(needs, sentiment, buying, questions, flags,
-                    matchProducts(profile, needs, tail, state), mergeLifeMap(state, llm.lifeMap(), tail));
+                    matchProducts(profile, needs, tail, state), mergeLifeMap(state, llm.lifeMap(), tail), askContext);
             state.previous = out;
             return out;
         } catch (Exception e) {
             log.warn("LiveCopilotService: analysis failed: {}", e.toString());
+            return null;
+        }
+    }
+
+    /** True when the quoted words are, in the transcript itself, the start or end of a question. */
+    private static boolean endsInQuestion(String transcript, String quote) {
+        if (quote.endsWith("?")) return true;
+        String q = quote.toLowerCase().replaceAll("[\\s.!,\"'“”]+$", "");
+        int i = transcript.toLowerCase().indexOf(q);
+        if (i < 0) return false;
+        int end = i + q.length();
+        // the sentence the quote ends — does it close with a question mark?
+        int stop = end;
+        while (stop < transcript.length() && ".!?".indexOf(transcript.charAt(stop)) < 0) stop++;
+        return stop < transcript.length() && transcript.charAt(stop) == '?';
+    }
+
+    private AskLlm askNextCall(CustomerProfile profile, String tail, State state) {
+        try {
+            String recent = tail.length() > RECENT_CHARS ? tail.substring(tail.length() - RECENT_CHARS) : tail;
+            String user = "FACTS ALREADY KNOWN: " + knownFacts(profile) + "\n"
+                    + "KNOWN LIFE MAP: " + describeLifeMap(state.lifeMap) + "\n"
+                    + "QUESTIONS CURRENTLY SHOWN: " + state.currentQuestions + "\n"
+                    + "RETIRED QUESTIONS: " + state.retiredQuestions + "\n\n"
+                    + "FULL TRANSCRIPT SO FAR (for what has already been said):\n" + tail
+                    + "\n\nRECENT TRANSCRIPT (the last thing said is at the bottom):\n" + recent;
+            var r = chatModel.call(new Prompt(List.of(new SystemMessage(ASK_PROMPT), new UserMessage(user)),
+                    AzureOpenAiChatOptions.builder().responseFormat(JSON_FORMAT).temperature(0.3).build()));
+            return mapper.readValue(r.getResult().getOutput().getText(), AskLlm.class);
+        } catch (Exception e) {
+            log.warn("LiveCopilotService: ask-next call failed: {}", e.toString());
             return null;
         }
     }
@@ -176,7 +278,7 @@ public class LiveCopilotService {
         return sb.append("\nTranscript so far:\n").append(tail).toString();
     }
 
-    private String knownFacts(CustomerProfile p) {
+    public String knownFacts(CustomerProfile p) {
         Map<String, Object> facts = new LinkedHashMap<>();
         if (p.getCustomerName() != null) facts.put("name", p.getCustomerName());
         if (p.getAge() != null) facts.put("age", p.getAge());
@@ -192,6 +294,8 @@ public class LiveCopilotService {
     // ── Life Map ─────────────────────────────────────────────────────────
 
     private static final int MAX_PEOPLE = 5;
+    private static final Set<String> GENERIC_CHILD = Set.of("child", "children", "kid", "kids", "baby");
+    private static final Set<String> NAMEABLE_CHILD = Set.of("son", "daughter", "child", "kid", "baby");
     private static final int MAX_CONCERNS = 4;
     /** Same 0-100 fit scale as the live product matches; below this a product is not offered as an idea. */
     private static final int IDEA_MIN_FIT = 30;
@@ -219,12 +323,28 @@ public class LiveCopilotService {
         String haystack = norm(transcript);
 
         List<Person> people = new ArrayList<>(prev.people());
+        // Corrections first: a wrong name is replaced (or dropped, if the right one is already on the map).
+        if (draft.corrections() != null) {
+            for (Correction c : draft.corrections()) {
+                if (c == null || c.wrong() == null || c.right() == null || c.wrong().isBlank() || c.right().isBlank()) continue;
+                if (!haystack.contains(norm(c.right()))) continue; // the corrected name must really have been said
+                for (int i = 0; i < people.size(); i++) {
+                    Person o = people.get(i);
+                    if (o.name() == null || !norm(o.name()).equals(norm(c.wrong()))) continue;
+                    boolean already = people.stream().anyMatch(x -> x != o && x.name() != null && norm(x.name()).equals(norm(c.right())));
+                    if (already) { people.remove(i); i--; }
+                    else people.set(i, new Person(o.relation(), c.right().trim(), o.said()));
+                }
+            }
+        }
         if (draft.people() != null) {
             for (Person p : draft.people()) {
                 if (people.size() >= MAX_PEOPLE || p == null || p.relation() == null || p.relation().isBlank()) continue;
                 if (p.said() == null || !haystack.contains(norm(p.said()))) continue;
                 String rel = p.relation().trim();
                 String name = p.name() == null || p.name().isBlank() || p.name().equalsIgnoreCase("null") ? null : p.name().trim();
+                // "we have two children" is a generic child; once the children are named it only duplicates them.
+                if (name == null && GENERIC_CHILD.contains(rel.toLowerCase()) && people.stream().anyMatch(o -> o.name() != null && NAMEABLE_CHILD.contains(o.relation().toLowerCase()))) continue;
                 int existing = -1;
                 for (int i = 0; i < people.size(); i++) {
                     Person o = people.get(i);
@@ -237,6 +357,11 @@ public class LiveCopilotService {
                     people.add(new Person(rel, name, p.said().trim()));
                 }
             }
+        }
+
+        // A generic child heard before the names were: drop it once a named child exists.
+        if (people.stream().anyMatch(o -> o.name() != null && NAMEABLE_CHILD.contains(o.relation().toLowerCase()))) {
+            people.removeIf(o -> o.name() == null && GENERIC_CHILD.contains(o.relation().toLowerCase()));
         }
 
         List<Concern> dreams = mergeConcerns(prev.dreams(), draft.dreams(), haystack);
@@ -352,7 +477,7 @@ public class LiveCopilotService {
 
     // ── Questions ────────────────────────────────────────────────────────
 
-    private List<String> pickQuestions(State state, List<String> proposed) {
+    private List<String> pickQuestions(State state, List<String> proposed, boolean reactive) {
         List<String> picked = new ArrayList<>();
         if (proposed != null) {
             for (String q : proposed) {
@@ -366,8 +491,11 @@ public class LiveCopilotService {
         if (picked.isEmpty() && proposed == null) return state.currentQuestions;
 
         // Anything shown before that is no longer suggested is now answered/dropped: retire it.
-        for (String old : state.currentQuestions) {
-            if (picked.stream().noneMatch(q -> similar(q, old))) state.retiredQuestions.add(old);
+        // In reactive mode the lead question changes with the customer's latest words, so a gap question that was
+        // merely pushed down is NOT retired — it may be asked again later. Only the old lead is retired.
+        for (int i = 0; i < state.currentQuestions.size(); i++) {
+            String old = state.currentQuestions.get(i);
+            if (picked.stream().noneMatch(q -> similar(q, old)) && (!reactive || i == 0)) state.retiredQuestions.add(old);
         }
         state.currentQuestions = List.copyOf(picked);
         return state.currentQuestions;

@@ -10,13 +10,23 @@ public record CopilotInsights(
     List<String> nextQuestions,
     List<ComplianceFlag> complianceFlags,
     List<ProductMatch> productMatches,
-    LifeMap lifeMap
+    LifeMap lifeMap,
+    AskContext askContext
 ) {
+    /** Why the first "ask next" question was suggested: the customer's own words it responds to, and what kind of move it is. */
+    public record AskContext(String trigger, String kind) {}
+
+    public CopilotInsights(List<NeedTag> needs, Sentiment sentiment, BuyingSignal buyingSignal,
+                           List<String> nextQuestions, List<ComplianceFlag> complianceFlags,
+                           List<ProductMatch> productMatches, LifeMap lifeMap) {
+        this(needs, sentiment, buyingSignal, nextQuestions, complianceFlags, productMatches, lifeMap, null);
+    }
+
     /** Snapshots stored before the Life Map existed have no map — they deserialize it as null. */
     public CopilotInsights(List<NeedTag> needs, Sentiment sentiment, BuyingSignal buyingSignal,
                            List<String> nextQuestions, List<ComplianceFlag> complianceFlags,
                            List<ProductMatch> productMatches) {
-        this(needs, sentiment, buyingSignal, nextQuestions, complianceFlags, productMatches, null);
+        this(needs, sentiment, buyingSignal, nextQuestions, complianceFlags, productMatches, null, null);
     }
 
     /** strength 0-100 — how strongly the customer has signalled this need. */

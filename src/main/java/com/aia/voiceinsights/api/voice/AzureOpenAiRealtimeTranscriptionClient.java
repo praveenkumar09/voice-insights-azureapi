@@ -53,7 +53,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     private final String apiUrl;
     private final String apiKey;
     private final String transcriptionModel;
-    private final String prompt;
+    private volatile String prompt;
     private final Listener listener;
 
     private volatile WebSocket webSocket;
@@ -81,6 +81,16 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         this.transcriptionModel = transcriptionModel;
         this.prompt = prompt;
         this.listener = listener;
+    }
+
+    /**
+     * Gives the speech model fresh context mid-conversation (for example "a name is about to be said, and these names have
+     * already been heard"), which helps it spell personal names the way the conversation has been spelling them.
+     */
+    public void updatePrompt(String newPrompt) {
+        if (newPrompt == null || newPrompt.equals(prompt)) return;
+        this.prompt = newPrompt;
+        if (connected) sendSessionUpdate();
     }
 
     public CompletableFuture<Void> connect() {
@@ -182,6 +192,19 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     private static final int MAX_TURN_MS = 9000;      // cut here even without a pause
     private static final int IDLE_CLEAR_MS = 10000;   // drop a buffer that held only silence
 
+    /**
+     * Conversation with Juno: the browser ends each answer itself (a commit after the speaker goes quiet), so the
+     * server must not slice answers at tiny gaps between words — that is how a short tail such as a surname was cut
+     * off and then discarded as noise. A larger pause is needed to cut, and a shorter tail still counts as speech.
+     */
+    private volatile int cutGapMs = GAP_MS;
+    private volatile int minSpeechMs = MIN_SPEECH_MS;
+
+    public void setConversational(boolean on) {
+        cutGapMs = on ? 550 : GAP_MS;
+        minSpeechMs = on ? 400 : MIN_SPEECH_MS;
+    }
+
     private double noiseFloor = 150;
     private int turnMs, speechMs, gapMs;
 
@@ -202,8 +225,8 @@ public class AzureOpenAiRealtimeTranscriptionClient {
             turnMs += ms;
             if (quiet) gapMs += ms; else { speechMs += ms; gapMs = 0; }
         }
-        boolean cut = speechMs >= MIN_SPEECH_MS && ((gapMs >= GAP_MS && turnMs >= MIN_TURN_MS) || turnMs >= MAX_TURN_MS);
-        if (!cut && speechMs < MIN_SPEECH_MS && turnMs >= IDLE_CLEAR_MS) {
+        boolean cut = speechMs >= minSpeechMs && ((gapMs >= cutGapMs && turnMs >= MIN_TURN_MS) || turnMs >= MAX_TURN_MS);
+        if (!cut && speechMs < minSpeechMs && turnMs >= IDLE_CLEAR_MS) {
             send(Map.of("type", "input_audio_buffer.clear"));
             segment.clear();
             turnMs = speechMs = gapMs = 0;
@@ -218,7 +241,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     public synchronized void commit() {
         // Committing a few hundred milliseconds of room noise makes the model invent a sentence (it expects insurance
         // talk). Stop and pause also call this, so anything without real speech in it is discarded instead.
-        if (speechMs < MIN_SPEECH_MS) {
+        if (speechMs < minSpeechMs) {
             if (turnMs > 0) System.out.println("[voice-stt] discarded " + turnMs + "ms (" + speechMs + "ms speech) — too little to transcribe");
             send(Map.of("type", "input_audio_buffer.clear"));
             segment.clear();

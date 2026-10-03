@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.azure.openai.AzureOpenAiChatOptions;
@@ -81,7 +82,7 @@ public class RecommendationAgentService {
      *  agents within one run (and several concurrent runs) call the model at once. */
     private final ExecutorService llmExecutor = Executors.newFixedThreadPool(24);
 
-    public RecommendationAgentService(ChatModel chatModel, ProductVectorSearchService productSearch) {
+    public RecommendationAgentService(@Qualifier("azureOpenAiChatModel") ChatModel chatModel, ProductVectorSearchService productSearch) {
         this.chatModel = chatModel;
         this.productSearch = productSearch;
     }

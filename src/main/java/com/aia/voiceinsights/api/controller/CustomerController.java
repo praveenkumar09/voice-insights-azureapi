@@ -122,7 +122,7 @@ public class CustomerController {
         var enriched = copilotService.enrichLifeMap(cleaned);
         CopilotInsights latest = profile.getLiveInsights().latest();
         CopilotInsights updated = new CopilotInsights(latest.needs(), latest.sentiment(), latest.buyingSignal(),
-                latest.nextQuestions(), latest.complianceFlags(), latest.productMatches(), enriched);
+                latest.nextQuestions(), latest.complianceFlags(), latest.productMatches(), enriched, latest.askContext());
         profile.setLiveInsights(new LiveInsightsSnapshot(updated, profile.getLiveInsights().history()));
         profileStore.save(profile);
         return ResponseEntity.ok(updated);
@@ -137,5 +137,20 @@ public class CustomerController {
         return profileStore.findById(id)
                 .<ResponseEntity<?>>map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /**
+     * A customer declined consent to a Juno conversation: nothing from it is kept. Only a conversation that
+     * was never finalized (no recommendation can have been started from it) may be discarded this way.
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> discard(@PathVariable String id) {
+        var existing = profileStore.findById(id);
+        if (existing.isEmpty()) return ResponseEntity.noContent().build();
+        if ("FINALIZED".equals(existing.get().getStatus()) || !"JUNO".equals(existing.get().getCaptureMode())) {
+            return ResponseEntity.status(409).body(Map.of("error", "Only an unfinished Juno conversation can be discarded"));
+        }
+        profileStore.delete(id);
+        return ResponseEntity.noContent().build();
     }
 }

@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.azure.openai.AzureOpenAiChatOptions;
 import org.springframework.ai.azure.openai.AzureOpenAiResponseFormat;
@@ -32,7 +33,9 @@ public class ProfileExtractionService {
             agent's live conversation with a customer, transcribed so far. Extract
             ONLY facts actually stated or clearly implied in the transcript; leave
             a field null (or an empty array) if it hasn't come up yet. Never invent
-            details that were not said.
+            details that were not said. If the customer spells their name letter by letter
+            (for example "C-H-E-N"), the spelled letters are the correct spelling of that name — use them
+            instead of any earlier guess.
 
             Respond with ONLY a JSON object, no markdown fences, no commentary:
             {
@@ -59,7 +62,7 @@ public class ProfileExtractionService {
     private final ChatModel chatModel;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public ProfileExtractionService(ChatModel chatModel) {
+    public ProfileExtractionService(@Qualifier("azureOpenAiChatModel") ChatModel chatModel) {
         this.chatModel = chatModel;
     }
 

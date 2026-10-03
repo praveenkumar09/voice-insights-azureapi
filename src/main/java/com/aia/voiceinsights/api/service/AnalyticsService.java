@@ -28,7 +28,7 @@ public class AnalyticsService {
 
     private static final int MAX_PROFILES = 5000;
     private static final int HOT = 70;
-    private static final int WARM = 40;
+    private static final int WARM = 35; // only used when a snapshot carries no label — matches LiveCopilotService.levelFor
     private static final ZoneId ZONE = ZoneId.of("Asia/Singapore");
 
     private final CustomerProfileStore profileStore;
@@ -88,8 +88,8 @@ public class AnalyticsService {
         int hot = 0, warm = 0, cold = 0, pos = 0, neu = 0, neg = 0, withFlags = 0, high = 0, caution = 0;
         Map<String, double[]> needs = new HashMap<>(); // label -> [count, strengthSum]
         for (CustomerProfile p : analysed) {
-            int b = buying(p);
-            if (b >= HOT) hot++; else if (b >= WARM) warm++; else cold++;
+            // Bucketed by the Hot / Warm / Cold label the advisor saw live, so the dashboard can never disagree with the screen.
+            switch (level(p)) { case "Hot" -> hot++; case "Warm" -> warm++; default -> cold++; }
             int s = sentiment(p);
             if (s >= 25) pos++; else if (s <= -25) neg++; else neu++;
             var flags = p.getLiveInsights().latest().complianceFlags();
@@ -132,7 +132,7 @@ public class AnalyticsService {
         List<AgentRow> agents = byAgent.entrySet().stream().map(e -> new AgentRow(
                 e.getKey(), e.getValue().size(),
                 round1(e.getValue().stream().mapToInt(p -> buying(p)).average().orElse(0)),
-                (int) e.getValue().stream().filter(p -> buying(p) >= HOT).count(),
+                (int) e.getValue().stream().filter(p -> "Hot".equals(level(p))).count(),
                 e.getValue().stream().mapToInt(p -> {
                     var f = p.getLiveInsights().latest().complianceFlags();
                     return f == null ? 0 : f.size();
@@ -140,7 +140,7 @@ public class AnalyticsService {
                 .sorted(Comparator.comparingInt(AgentRow::conversations).reversed()).toList();
 
         List<Lead> leads = analysed.stream()
-                .filter(p -> buying(p) >= HOT)
+                .filter(p -> "Hot".equals(level(p)))
                 .sorted(Comparator.comparingInt((CustomerProfile p) -> buying(p)).reversed())
                 .limit(6).map(p -> {
                     var ns = p.getLiveInsights().latest().needs();
@@ -196,7 +196,7 @@ public class AnalyticsService {
         List<CustomerProfile> prevAnalysed = previousProfiles.stream()
                 .filter(p -> p.getLiveInsights() != null && p.getLiveInsights().latest() != null).toList();
         Previous prev = new Previous(previousProfiles.size(), prevAnalysed.size(),
-                (int) prevAnalysed.stream().filter(p -> buying(p) >= HOT).count(),
+                (int) prevAnalysed.stream().filter(p -> "Hot".equals(level(p))).count(),
                 (int) previousProfiles.stream().filter(p -> latestRunByProfile.containsKey(p.getId())).count(),
                 round1(prevAnalysed.stream().mapToInt(p -> buying(p)).average().orElse(0)));
 
@@ -213,6 +213,16 @@ public class AnalyticsService {
                 new Pipeline(hot, warm, cold), new Sentiment(pos, neu, neg),
                 new Compliance(withFlags, high, caution, complianceVerdicts.size(), compliantRuns),
                 topNeeds, topProducts, trend, agents, leads, takeaways, ops, prev, activity);
+    }
+
+    /** The label the live copilot showed ("Hot", "Warm" or "Cold"); falls back to the score for an unlabelled snapshot. */
+    private static String level(CustomerProfile p) {
+        String l = p.getLiveInsights().latest().buyingSignal().level();
+        if ("Hot".equalsIgnoreCase(l)) return "Hot";
+        if ("Warm".equalsIgnoreCase(l)) return "Warm";
+        if ("Cold".equalsIgnoreCase(l)) return "Cold";
+        int b = buying(p);
+        return b >= HOT ? "Hot" : b >= WARM ? "Warm" : "Cold";
     }
 
     private static int buying(CustomerProfile p) { return p.getLiveInsights().latest().buyingSignal().score(); }
