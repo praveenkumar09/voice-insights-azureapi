@@ -54,6 +54,8 @@ public class LiveCopilotService {
             You are a real-time copilot for an AIA insurance advisor, reading a live,
             speaker-unlabelled transcript of the advisor talking with a customer.
             Infer who is speaking from context. Be concise and never invent facts.
+            The conversation may be in English, Mandarin, Malay or Tamil, or a mix. Write every label, signal and question in
+            English, but copy every "said" quote EXACTLY as spoken, in its original language. Keep personal names as spoken.
 
             Respond with ONLY a JSON object, no markdown fences:
             {
@@ -63,9 +65,9 @@ public class LiveCopilotService {
               "nextQuestions": ["up to 3 short questions the advisor should ask next, based on what is still unknown (existing coverage, budget, dependents, health, timeline, goals)"],
               "complianceFlags": [ {"severity": "high|medium", "statement": "the risky thing the ADVISOR said, quoted briefly", "advice": "one short corrective suggestion"} ],
               "lifeMap": {
-                "people": [ {"relation": "Wife|Husband|Partner|Daughter|Son|Child|Mother|Father|Parent|Sibling, or a short free-text relation such as Mother-in-law, Grandmother, Uncle", "name": "first name ONLY if said, else null", "said": "the customer's exact words mentioning them, max 12 words"} ],
-                "dreams": [ {"label": "max 4 words, e.g. Daughter's university", "forRelation": "the ONE person it is mainly about (a relation above), or Self", "said": "exact words, max 12 words"} ],
-                "worries": [ {"label": "max 4 words, e.g. Family history of cancer", "forRelation": "a relation above, or Self", "said": "exact words, max 12 words"} ],
+                "people": [ {"relation": "ALWAYS in English: Wife|Husband|Partner|Daughter|Son|Child|Mother|Father|Parent|Sibling, or a short free-text relation such as Mother-in-law, Grandmother, Uncle", "name": "first name ONLY if said, else null — ALWAYS in Latin letters (romanised if said in another language)", "said": "the customer's exact words mentioning them, max 12 words, in the language they said them", "saidEn": "English translation of those words (identical to said if already English)"} ],
+                "dreams": [ {"label": "max 4 words IN ENGLISH, e.g. Daughter's university", "forRelation": "the ONE person it is mainly about (a relation above), or Self", "said": "exact words, max 12 words", "saidEn": "English translation of those words"} ],
+                "worries": [ {"label": "max 4 words IN ENGLISH, e.g. Family history of cancer", "forRelation": "a relation above, or Self", "said": "exact words, max 12 words", "saidEn": "English translation of those words"} ],
                 "corrections": [ {"wrong": "a name or relation as you listed it before", "right": "what the customer says it actually is, exactly as they said it"} ]
               }
             }
@@ -75,7 +77,7 @@ public class LiveCopilotService {
             - sentiment: the customer's CURRENT mood, weighted toward their last 2-3 turns — move it promptly when their tone genuinely changes (e.g. relief, enthusiasm, objection), but do not swing on a single neutral advisor line.
             - Stability: you are given the PREVIOUS analysis. Keep scores, needs and questions the same unless the new transcript gives real evidence to change them — never re-rate from scratch.
             - nextQuestions: you are given facts ALREADY KNOWN, the questions currently suggested, and RETIRED questions. Keep a current question ONLY if it is still unanswered; replace answered ones with a NEW topic; never suggest anything about a known fact, and never repeat or rephrase a retired question. Fewer than 3 (even 0) is fine if nothing useful is left to ask.
-            - lifeMap: ONLY what the CUSTOMER explicitly said about the people in their life, what they hope for, and what worries them. "said" must be copied EXACTLY from the transcript — never paraphrase. forRelation is Self for the customer's own hopes and worries AND for anything about the whole family together (e.g. retiring early, travelling as a family). Do not include the customer themself as a person, and do not invent anyone or anything. Max 5 people, 4 dreams, 4 worries. Keep the KNOWN LIFE MAP entries you are given (same labels) and only add what is newly said.
+            - lifeMap: ONLY what the CUSTOMER explicitly said about the people in their life, what they hope for, and what worries them. "said" must be copied EXACTLY from the transcript — never paraphrase. forRelation is Self for the customer's own hopes and worries AND for anything about the whole family together (e.g. retiring early, travelling as a family). Do not include the customer themself as a person, and do not invent anyone or anything. Max 5 people, 4 dreams, 4 worries. Keep the KNOWN LIFE MAP entries you are given (same labels) and only add what is newly said. Whatever language the customer speaks, the map itself is ALWAYS in English: relation and label in English, names in Latin letters; only "said" stays in the original language, with its English translation in "saidEn".
             - corrections: ONLY when the customer explicitly says someone's name was wrong or mis-stated ("not Milo, my daughter is Neela", "it's Raja, not Hussein"). Give the wrong name exactly as listed in KNOWN LIFE MAP and the right one exactly as the customer said it. Never invent a correction. Otherwise an empty array.
             - complianceFlags: ONLY for statements by the advisor such as guaranteed returns, promises of approval or claim payout, misleading comparisons, pressure tactics, or advice beyond suitability. Empty array if none. Never flag the customer.
             """).formatted(NeedTaxonomy.asPromptList());
@@ -145,12 +147,28 @@ public class LiveCopilotService {
     private record Llm(List<NeedTag> needs, Sentiment sentiment, BuyingSignal buyingSignal,
                        List<String> nextQuestions, List<ComplianceFlag> complianceFlags, LifeMapDraft lifeMap) {}
 
-    private record LifeMapDraft(List<Person> people, List<DraftConcern> dreams, List<DraftConcern> worries, List<Correction> corrections) {}
+    private record LifeMapDraft(List<DraftPerson> people, List<DraftConcern> dreams, List<DraftConcern> worries, List<Correction> corrections) {}
+
+    /** A person as the model proposes them: {@code said} is the customer's exact words (verified), {@code saidEn} their English translation. */
+    private record DraftPerson(String relation, String name, String said, String saidEn) {}
 
     /** The customer said a name was wrong ("not Milo, her name is Neela"): {@code wrong} is replaced by {@code right}. */
     private record Correction(String wrong, String right) {}
 
-    private record DraftConcern(String label, String forRelation, String said) {}
+    private record DraftConcern(String label, String forRelation, String said, String saidEn) {}
+
+    /** The life map is always in English: anything written in Chinese, Tamil or another non-Latin script is not accepted as a label, relation or name. */
+    private static final java.util.regex.Pattern NON_LATIN = java.util.regex.Pattern.compile(
+            "[\\p{IsHan}\\p{IsTamil}\\p{IsArabic}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHangul}\\p{IsDevanagari}\\p{IsThai}]");
+
+    private static boolean nonLatin(String s) {
+        return s != null && NON_LATIN.matcher(s).find();
+    }
+
+    /** What the map stores and shows for the customer's words: the English translation when there is one. */
+    private static String shownQuote(String said, String saidEn) {
+        return saidEn != null && !saidEn.isBlank() && !nonLatin(saidEn) ? saidEn.trim() : said.trim();
+    }
 
     /** Per-call memory: last smoothed snapshot plus the question history used to stop repeats. */
     public static class State {
@@ -327,6 +345,7 @@ public class LiveCopilotService {
         if (draft.corrections() != null) {
             for (Correction c : draft.corrections()) {
                 if (c == null || c.wrong() == null || c.right() == null || c.wrong().isBlank() || c.right().isBlank()) continue;
+                if (nonLatin(c.right())) continue; // names on the map are in Latin letters
                 if (!haystack.contains(norm(c.right()))) continue; // the corrected name must really have been said
                 for (int i = 0; i < people.size(); i++) {
                     Person o = people.get(i);
@@ -338,11 +357,11 @@ public class LiveCopilotService {
             }
         }
         if (draft.people() != null) {
-            for (Person p : draft.people()) {
-                if (people.size() >= MAX_PEOPLE || p == null || p.relation() == null || p.relation().isBlank()) continue;
+            for (DraftPerson p : draft.people()) {
+                if (people.size() >= MAX_PEOPLE || p == null || p.relation() == null || p.relation().isBlank() || nonLatin(p.relation())) continue;
                 if (p.said() == null || !haystack.contains(norm(p.said()))) continue;
                 String rel = p.relation().trim();
-                String name = p.name() == null || p.name().isBlank() || p.name().equalsIgnoreCase("null") ? null : p.name().trim();
+                String name = p.name() == null || p.name().isBlank() || p.name().equalsIgnoreCase("null") || nonLatin(p.name()) ? null : p.name().trim();
                 // "we have two children" is a generic child; once the children are named it only duplicates them.
                 if (name == null && GENERIC_CHILD.contains(rel.toLowerCase()) && people.stream().anyMatch(o -> o.name() != null && NAMEABLE_CHILD.contains(o.relation().toLowerCase()))) continue;
                 int existing = -1;
@@ -354,7 +373,7 @@ public class LiveCopilotService {
                     Person o = people.get(existing);
                     if (o.name() == null && name != null) people.set(existing, new Person(o.relation(), name, o.said()));
                 } else {
-                    people.add(new Person(rel, name, p.said().trim()));
+                    people.add(new Person(rel, name, shownQuote(p.said(), p.saidEn())));
                 }
             }
         }
@@ -374,11 +393,12 @@ public class LiveCopilotService {
         List<Concern> out = new ArrayList<>(prev);
         if (proposed == null) return out;
         for (DraftConcern d : proposed) {
-            if (out.size() >= MAX_CONCERNS || d == null || d.label() == null || d.label().isBlank()) continue;
+            if (out.size() >= MAX_CONCERNS || d == null || d.label() == null || d.label().isBlank() || nonLatin(d.label())) continue;
             if (d.said() == null || !haystack.contains(norm(d.said()))) continue;
             if (out.stream().anyMatch(o -> similar(o.label(), d.label()))) continue;
-            out.add(new Concern(d.label().trim(), d.forRelation() == null || d.forRelation().isBlank() ? "Self" : d.forRelation().trim(),
-                    d.said().trim(), ideaFor("Insurance protection for: " + d.label() + ". " + d.said())));
+            String quote = shownQuote(d.said(), d.saidEn());
+            out.add(new Concern(d.label().trim(), d.forRelation() == null || d.forRelation().isBlank() || nonLatin(d.forRelation()) ? "Self" : d.forRelation().trim(),
+                    quote, ideaFor("Insurance protection for: " + d.label() + ". " + quote)));
         }
         return out;
     }

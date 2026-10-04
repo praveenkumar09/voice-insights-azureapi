@@ -219,6 +219,12 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             vs.transcriptionClient.commit();
             return;
         }
+        // "language": the customer (or advisor) chose another language — tell the speech model what to expect.
+        if ("language".equals(node.path("type").asText(""))) {
+            vs.lang = com.aia.voiceinsights.api.service.JunoPhrases.normalize(node.path("lang").asText("en"));
+            if (vs.transcriptionClient != null) vs.transcriptionClient.updatePrompt(transcriptionPrompt(nameContext(vs, "")));
+            return;
+        }
         // "agent_say": Juno spoke. Its words go into the transcript, labelled, so the customer's short answers
         // ("two, a boy and a girl") are analysed together with the question they answer.
         if ("agent_say".equals(node.path("type").asText("")) && "JUNO".equals(vs.profile.getCaptureMode())) {
@@ -343,6 +349,10 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
      */
     private String nameContext(VoiceSession vs, String junoLine) {
         StringBuilder sb = new StringBuilder();
+        if (!"en".equals(vs.lang)) {
+            sb.append("The customer is speaking ").append(com.aia.voiceinsights.api.service.JunoPhrases.of(vs.lang).language())
+                    .append(" (they may mix in English words). Transcribe in the language spoken. ");
+        }
         if (NAME_TALK.matcher(junoLine).find()) {
             sb.append("The speaker is about to say personal names (their own or family members', Indian, Malay or Chinese in Singapore).");
         }
@@ -365,6 +375,8 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         volatile boolean intentionalClose = false;
         /** Set once the session has been finalized (the conversation completed): an unfinished Juno session is discarded. */
         volatile boolean finalized = false;
+        /** The language Juno is speaking with the customer (en, zh, ms, ta). */
+        volatile String lang = "en";
         volatile int reconnectAttempts = 0;
         volatile boolean copilotDirty = false;
         final LiveCopilotService.State copilotState;

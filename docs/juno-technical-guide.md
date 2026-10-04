@@ -41,6 +41,8 @@
 - an **advisory report**, a **customer proposal**, a **goals & plan** page for the customer, and an **advice pack** (the advisor's paperwork: fact-find, record of advice, follow-up message, CRM note, next-meeting brief);
 - an **admin dashboard** with statistics.
 
+**Juno's signature abilities:** it holds a **natural conversation** (the customer can interrupt it, and it replies in a few seconds) and it speaks **English, Mandarin, Malay and Tamil** (English by default, others chosen on screen).
+
 **The idea that ties it together.** *The AI does the listening, structuring and drafting; the human advisor stays in charge.* Only a person can start the analysis, sign off the advice pack, and make the advice decisions. Juno never gives prices, returns or guarantees.
 
 **Core technologies (each explained later):** a React web app; a Java Spring Boot server; Azure OpenAI (for transcription, reasoning, and speech); a Postgres database with vector search; Redis; LangGraph4j (to run the 11 agents as a team).
@@ -77,6 +79,7 @@ Skim this now; come back when a term appears.
 | **Compliance flag** | A warning that someone said something risky (e.g. "guaranteed returns"). |
 | **Life map** | Our visual of the customer's world: the people they protect, their hopes, and their worries. |
 | **Advice pack** | The advisor's after-meeting paperwork, drafted automatically and signed off by the advisor. |
+| **Barge-in** | Interrupting someone who is speaking. Juno supports it: if the customer talks over Juno, Juno stops and listens. |
 | **`isTrusted` click** | A browser flag that is `true` only for real human clicks, `false` for clicks made by scripts. We use it so only a person can start the analysis. |
 
 ---
@@ -440,6 +443,37 @@ A dark, glass-style console with two columns:
 | Abandoned sessions | An unfinished Juno conversation is **deleted** when the connection closes. |
 | Misheard names | On-screen **Review before analysis** panel lets the advisor correct names, details, and the life map before analysis; Juno re-checks unusual names by asking for a spelling. |
 
+### 9.8 Languages (English by default)
+
+Juno speaks **English, Mandarin Chinese, Malay and Tamil**. English is the default; the customer or advisor chooses another language with the selector (**EN · 中文 · BM · தமிழ்**) in the stage's top bar, before starting or **at any point during the conversation**. A new conversation always starts in English again.
+
+How it works:
+- **One table of fixed lines per language** (`service/JunoPhrases.java`): the greeting, consent questions, goodbyes, acknowledgements, buttons. The browser fetches them from `GET /api/juno/phrases?lang=…`, so server and screen always agree.
+- **Juno's brain** is told which language to use (`LANGUAGE:` line in each request). It understands the customer's answers in any language, keeps "AIA" and product names in English, and (in Chinese) uses the polite form 您.
+- **Speech in:** the transcription model detects the spoken language itself. The server also tells it which language to expect (`{"type":"language"}` message), which improves accuracy.
+- **Speech out:** the same `gpt-4o-mini-tts` voices (Coral, Ash) speak each language; the style instruction adds "speak *Language* naturally".
+- **Records stay in English.** Extraction and the live copilot are told to write every label in English while keeping the customer's exact quotes in their own language. So the profile, life map labels, analysis and advice pack are in English, and quotes are verifiable against the original transcript.
+- **Language-neutral flow control.** Things that used English wording (is this the closing question? has the customer nothing more to ask? is the question an open one?) are decided from flags sent by the browser or returned by the model, not from English phrases.
+- **Captions:** Chinese captions light up character by character (it has no spaces between words).
+
+Honest limits: the fixed wording in Mandarin, Malay and Tamil was drafted by us and **needs review by native speakers and Compliance** (especially the consent and disclosure wording); the on-screen panels are still English; the quick yes/no shortcut at consent is English-only (other languages use the AI for that one decision).
+
+### 9.9 Natural interruption (barge-in)
+
+The customer can cut in while Juno is speaking, like a real conversation.
+
+- While Juno speaks, the browser **keeps measuring the microphone** and **holds the last fraction of a second of audio** (nothing is sent to the server yet).
+- It learns how loud Juno itself sounds in the room during the first moments of each line. If the customer's voice rises **clearly above that level for about 0.3 seconds**, it is treated as an interruption.
+- Juno **stops mid-sentence**, the held audio (the customer's first words) is sent, and Juno listens. The cut-off line is recorded as "…[interrupted]", so the record shows what the customer actually heard.
+- Juno's reply then answers what the customer said (for example a question) before returning to its own questions.
+- With interruption on, Juno also **replies sooner** after a pause (about 35% shorter waits), because an early reply can now simply be cut in on.
+
+**Safe by design:** it turns on **automatically when headphones are detected**, because on laptop speakers Juno's own voice leaks into the microphone. The advisor can force it on or off with the **Interrupt** button. Final wrap-up lines and the "take your time" prompt cannot be interrupted. In our tests on speakers there were no false interruptions, but a normal-volume customer is not always louder than Juno's echo, so **headphones are recommended for demonstrations**.
+
+### 9.10 The customer-safe screen
+
+A Juno conversation opens in the **customer-safe view**, because the customer is the one looking at the screen: the advisor-only signals (mood, interest score) and product details are hidden. When Juno hands over, the screen returns to the advisor's full view. The advisor can switch the safe view on or off at any time with the toggle at the top right of the home screen.
+
 ---
 
 ## 10. Platform topics: data, security, API, admin, deployment
@@ -473,7 +507,7 @@ Tables are created automatically on startup. JSON columns (`jsonb`) keep rich ne
 | Customers | `POST /api/customers` (save/finalize), `GET /api/customers/{id}`, `PUT /{id}/transcript` (corrected transcript → re-analysis), `PUT /{id}/lifemap` (advisor edits), `DELETE /{id}` (discard an unfinished Juno conversation) |
 | Recommendations | `POST /api/customers/{id}/recommendations` (start a run), `GET /api/recommendations/{runId}`, `GET …/stream` (SSE progress), `POST …/proposal`, `POST …/story`, `GET …/report` (Markdown) |
 | Advice pack | `GET/POST/PUT /api/recommendations/{runId}/advice-pack`, `POST …/section/{section}` (regenerate one section), `POST …/review` (sign off) |
-| Juno | `POST /api/juno/turn` (the brain), `POST /api/juno/speak` (audio), `GET /api/juno/voice` (is neural voice on?) |
+| Juno | `POST /api/juno/turn` (the brain), `POST /api/juno/speak` (audio), `GET /api/juno/voice` (is neural voice on?), `GET /api/juno/phrases?lang=` (fixed lines per language) |
 | Admin | `GET /api/admin/analytics?days=…`, `GET /api/admin/customers` |
 | Live voice | WebSocket `/ws/voice` |
 
@@ -536,7 +570,7 @@ Configuration lives in `voice-insights-azureapi/.env` (never commit it). Relevan
 
 1. **Set the scene (30 s).** "Advisors spend hours after meetings on notes, reports and follow-ups. We built a system that listens, understands, and drafts all of it — with the advisor in control."
 2. **Home screen (30 s).** Show the three modes. "Most advisors will use *After the meeting* or *With the customer*. The newest mode is *Juno*."
-3. **Juno live (3 min).** Start Juno. Point out: it introduces itself and **asks consent**; the orb colours (rose = speaking, teal = listening); the **words lighting up as spoken**; the right-hand panel **filling in real details live**; the customer asking a question and Juno **naming a product but not quoting a price**; mentioning an NRIC and seeing Juno decline it politely. End with **"Juno hands over to you."**
+3. **Juno live (3 min).** Start Juno (switch a language, and interrupt it once, if you have headphones). Point out: it introduces itself and **asks consent**; the orb colours (rose = speaking, teal = listening); the **words lighting up as spoken**; the right-hand panel **filling in real details live**; the customer asking a question and Juno **naming a product but not quoting a price**; mentioning an NRIC and seeing Juno decline it politely. End with **"Juno hands over to you."**
 4. **Review and analyse (1 min).** Show the review panel (correct a name), then press **Get Recommendations** — "only a human can press this".
 5. **The 11 agents (1 min).** Show the four phases lighting up; "the first three run in parallel; the whole thing takes about 30 seconds".
 6. **Outputs (1 min).** Final report, proposal, goals & plan, the advice pack with the advisor sign-off stamp.
@@ -561,7 +595,8 @@ Configuration lives in `voice-insights-azureapi/.env` (never commit it). Relevan
 | *What if it mishears a name?* | Juno asks for a spelling when unsure, names are corrected live if the customer corrects them, and the advisor can edit everything on the review screen before analysis. |
 | *How fast is it?* | Juno answers about 3–4 seconds after the customer finishes (most of that is the AI thinking plus voice generation). The 11-agent analysis finishes in about 30–40 seconds. |
 | *Why Azure OpenAI?* | Models run inside our Azure environment under our own agreement and region choices. |
-| *Which languages?* | English today. The transcription model handles Singapore code-switching reasonably, but Juno speaks and understands English only. |
+| *Which languages?* | English by default, plus Mandarin, Malay and Tamil, chosen on screen and switchable mid-conversation. Records and analysis stay in English. |
+| *Can the customer interrupt Juno?* | Yes: Juno stops mid-sentence and listens (automatic with headphones; a switch for speakers). |
 | *What does it cost to run?* | Cost is mainly model usage: roughly a few cents of speech per Juno conversation plus the reasoning calls. Repeated lines are cached. (Check current Azure pricing for exact figures.) |
 | *Is it accurate?* | It is a drafting and coaching tool. Every key output is reviewable; names and numbers are always editable before analysis. |
 
@@ -573,11 +608,11 @@ Being upfront about limits builds trust.
 
 | Limitation | Notes / possible next step |
 |---|---|
-| **No interruption of Juno.** If the customer talks *while Juno is speaking*, those words are not heard (the mic is muted to avoid hearing itself). | Add "barge-in": detect real speech over Juno's voice using a headset or better echo cancellation. |
+| **Interruption works best with headphones.** On laptop speakers, Juno's voice leaks into the microphone, so a normal-volume interruption is not always detected. | Use headphones for demos; longer term, a better echo-cancellation approach or a streaming voice pipeline. |
 | **Name accuracy is probabilistic.** Speech models mishear unfamiliar names, especially mixed-language ones. | Current mitigations (hints, spelling check, review screen). Next: confirm the name on screen with a tap. |
 | **Voice is a good neural voice, not a clone of a person.** | Could try other voices/instructions; HD or custom voices if budget allows. |
 | **Redaction is pattern-based.** Spelled-out numbers aren't caught. | Add a model-based sensitive-data detector. |
-| **English only.** | Multilingual Juno needs language detection and multilingual prompts/voices. |
+| **Non-English wording needs review.** Mandarin, Malay and Tamil are supported, but the fixed lines were drafted by us, and on-screen panels are English. | Native-speaker and Compliance review; translate the on-screen panels; add automatic language detection if wanted. |
 | **Latency floor.** Reply time is bounded by AI response time plus voice generation. | Stream the AI reply and start speaking the first sentence early. |
 | **Demo-grade deployment.** Docker Compose on one machine; sessions reset on restart. | Move to managed hosting, persistent sessions, monitoring, and load testing for production. |
 | **Compliance review.** Wording and behaviour are guardrailed but not yet formally reviewed. | Have Legal/Compliance review prompts, disclosures, and retention periods before production. |

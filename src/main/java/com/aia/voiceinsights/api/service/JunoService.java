@@ -40,7 +40,6 @@ public class JunoService {
     /** After the interview the customer is invited to ask their own questions; Juno answers up to this many. */
     private static final int QA_MAX = 5;
     private static final String CLOSING_MARKER = "anything you'd like to ask";
-    private static final String CLOSING_FALLBACK = "That's really helpful, thank you. Before I hand you over to your advisor, is there anything you'd like to ask me?";
 
     private static final java.util.regex.Pattern NO_MORE = java.util.regex.Pattern.compile(
             "^\\s*(no|nope|nah|nothing|none|not really|that'?s (all|it)|that is (all|it)|i'?m (good|fine|done)|all good|no questions|nothing else|i have no questions)\\b",
@@ -50,10 +49,21 @@ public class JunoService {
             java.util.regex.Pattern.CASE_INSENSITIVE);
 
     public record Turn(String role, String text) {}
-    public record Request(String profileId, String phase, List<Turn> turns) {}
-    public record Response(String say, String consent, List<String> covered, boolean done, String stage, String tone) {}
+    /**
+     * {@code lang}: en (default), zh, ms or ta. The browser also tells the server how far the fixed parts of the conversation
+     * have gone (consent asked, closing question asked, questions answered), because in other languages the text can't be
+     * recognised by English wording.
+     */
+    public record Request(String profileId, String phase, List<Turn> turns, String lang, Integer consentAsks, Boolean closingAsked, Integer qaAnswers) {}
 
-    private record Llm(String consent, String say, List<String> covered, Boolean done, String tone) {}
+    /** {@code marker}: "closing" (this is the closing question) or "qa" (this answers a customer question). {@code open}: the question invites a long answer. */
+    public record Response(String say, String consent, List<String> covered, boolean done, String stage, String tone, String marker, Boolean open) {
+        public Response(String say, String consent, List<String> covered, boolean done, String stage, String tone) {
+            this(say, consent, covered, done, stage, tone, null, null);
+        }
+    }
+
+    private record Llm(String consent, String say, List<String> covered, Boolean done, String tone, Boolean open, Boolean noMore) {}
 
     private static final String SYSTEM = """
             You are Juno, the AIA Singapore digital and recommendation assistant, talking out loud with a customer who is meeting an
@@ -66,6 +76,8 @@ public class JunoService {
              "say": "what you say next",
              "covered": ["about","family","goals","concerns","money","cover" - every topic the customer has ALREADY given real information on],
              "done": true|false,
+             "open": true when your question invites a long, thoughtful answer (worries, hopes, family), false for a short factual one (name, age, yes/no),
+             "noMore": true ONLY in the final-questions phase, when the customer says they have nothing more to ask (in any language),
              "tone": "warm|gentle|upbeat|curious|reassuring" — how your line should SOUND: gentle when the customer just shared a worry, loss or health matter; upbeat for good news; curious when inviting more; reassuring when answering a concern; otherwise warm}
 
             Topics to cover, in a natural order, one question at a time:
@@ -123,7 +135,7 @@ public class JunoService {
             - If they ask something you cannot answer, say their advisor will cover that, then continue.
             - If they ask who you are or whether this is recorded, answer honestly: you are an AI assistant, and the
               conversation is recorded and analysed to help their advisor, with their permission.
-            - Speak English. Plain words. No emojis, no lists, no markdown.
+            - Speak in the language given as LANGUAGE (plain, natural words, as a native speaker would say them). The customer may answer in any language; understand it. Keep "AIA" and product names in English. No emojis, no lists, no markdown.
             - Set "done" true only when you are wrapping up. When wrapping up, "say" is: thank them warmly, give a
               one-sentence recap of what matters most to them, and tell them their advisor will now take it from here.
               A wrap-up is not a question.
@@ -137,9 +149,6 @@ public class JunoService {
             question (topic about, or family if you already know their name). If declined or unclear, "say" may be
             empty — it is handled elsewhere. covered is [] in this phase, and done is false.
             """;
-
-    /** First question after consent: scripted, so the customer's "yes" is answered instantly, with no model call. */
-    private static final String FIRST_QUESTION = "Thank you. To start, could I have your name?";
 
     /** Plain refusals and plain agreement are decided here, instantly; only ambiguous answers go to the model. */
     private static final java.util.regex.Pattern REFUSAL = java.util.regex.Pattern.compile(
@@ -155,8 +164,6 @@ public class JunoService {
             "\\b(not sure|unsure|maybe|perhaps|i guess|hmm+|let me think|depends|don'?t know|do not know|not certain|probably not|what for|why)\\b",
             java.util.regex.Pattern.CASE_INSENSITIVE);
 
-    private static final String DECLINED_SAY = "Of course, that's completely fine. I won't keep anything from this chat. Your advisor will be happy to take it from here.";
-    private static final String UNCLEAR_SAY = "Sorry, I didn't quite catch that. Is it all right if I record and analyse our chat, so your advisor can help you better? A simple yes or no is fine.";
 
     private final ChatModel chatModel;
     private final ProductVectorSearchService productSearch;
@@ -176,27 +183,29 @@ public class JunoService {
         List<Turn> turns = req.turns() == null ? List.of() : req.turns();
         boolean consentPhase = "consent".equalsIgnoreCase(req.phase());
         int customerTurns = (int) turns.stream().filter(t -> "customer".equals(t.role())).count();
-        int consentAsks = (int) turns.stream().filter(t -> "juno".equals(t.role()) && t.text() != null
+        JunoPhrases.Phrases ph = JunoPhrases.of(req.lang());
+        boolean english = "en".equals(JunoPhrases.normalize(req.lang()));
+        int consentAsks = req.consentAsks() != null ? req.consentAsks() : (int) turns.stream().filter(t -> "juno".equals(t.role()) && t.text() != null
                 && t.text().toLowerCase().contains("record and analyse")).count();
         try {
             boolean mustWrapUp = !consentPhase && customerTurns >= MAX_CUSTOMER_TURNS;
-            if (consentPhase) {
+            if (consentPhase && english) { // quick, instant decisions for plain English answers; everything else goes to the model
                 String reply = turns.isEmpty() ? "" : turns.getLast().text();
                 reply = reply == null ? "" : reply;
-                if (REFUSAL.matcher(reply).find()) return new Response(DECLINED_SAY, "declined", List.of(), true, "declined", "gentle");
+                if (REFUSAL.matcher(reply).find()) return new Response(ph.declined(), "declined", List.of(), true, "declined", "gentle");
                 if (UNSURE.matcher(reply).find()) {
                     // Consent must be clear: ask again once, and treat a second hedge as a no.
-                    if (consentAsks >= 2) return new Response(DECLINED_SAY, "declined", List.of(), true, "declined", "gentle");
-                    return new Response(UNCLEAR_SAY, "unclear", List.of(), false, "consent", "warm");
+                    if (consentAsks >= 2) return new Response(ph.declined(), "declined", List.of(), true, "declined", "gentle");
+                    return new Response(ph.unclear(), "unclear", List.of(), false, "consent", "warm");
                 }
-                if (AGREEMENT.matcher(reply).find()) return new Response(FIRST_QUESTION, "granted", List.of(), false, "discovery", "warm");
+                if (AGREEMENT.matcher(reply).find()) return new Response(ph.firstQuestion(), "granted", List.of(), false, "discovery", "warm");
             }
             String last = turns.isEmpty() || turns.getLast().text() == null ? "" : turns.getLast().text();
-            boolean closingAsked = !consentPhase && turns.stream().anyMatch(t -> "juno".equals(t.role()) && t.text() != null
-                    && t.text().toLowerCase().contains(CLOSING_MARKER));
-            int qaAnswers = (int) turns.stream().filter(t -> "juno".equals(t.role()) && t.text() != null
+            boolean closingAsked = !consentPhase && (Boolean.TRUE.equals(req.closingAsked()) || turns.stream().anyMatch(t -> "juno".equals(t.role()) && t.text() != null
+                    && t.text().toLowerCase().contains(CLOSING_MARKER)));
+            int qaAnswers = req.qaAnswers() != null ? req.qaAnswers() : (int) turns.stream().filter(t -> "juno".equals(t.role()) && t.text() != null
                     && t.text().toLowerCase().contains("anything else")).count();
-            boolean noMore = closingAsked && NO_MORE.matcher(last).find() && !last.contains("?");
+            boolean noMore = closingAsked && english && NO_MORE.matcher(last).find() && !last.contains("?") && !last.contains("？");
             boolean forceWrap = noMore || (closingAsked && qaAnswers >= QA_MAX);
             boolean qaMode = closingAsked && !forceWrap;
             boolean sensitive = !consentPhase && SENSITIVE.matcher(last).find();
@@ -204,22 +213,27 @@ public class JunoService {
 
             if (consentPhase) {
                 String c = llm.consent() == null ? "unclear" : llm.consent().toLowerCase();
-                if (c.startsWith("declin")) return new Response(DECLINED_SAY, "declined", List.of(), true, "declined", "gentle");
-                if (c.startsWith("grant")) return new Response(clean(llm.say(), "Thank you. To start, could I have your name?"), "granted", List.of(), false, "discovery", llm.tone());
+                if (c.startsWith("declin")) return new Response(ph.declined(), "declined", List.of(), true, "declined", "gentle");
+                if (c.startsWith("grant")) return new Response(clean(llm.say(), ph.firstQuestion()), "granted", List.of(), false, "discovery", llm.tone());
                 // Unclear: ask once more; a second unclear answer is treated as a no — consent must be clear.
-                if (consentAsks >= 2) return new Response(DECLINED_SAY, "declined", List.of(), true, "declined", "gentle");
-                return new Response(UNCLEAR_SAY, "unclear", List.of(), false, "consent", "warm");
+                if (consentAsks >= 2) return new Response(ph.declined(), "declined", List.of(), true, "declined", "gentle");
+                return new Response(ph.unclear(), "unclear", List.of(), false, "consent", "warm");
             }
 
             List<String> all = new ArrayList<>(TOPICS);
             // The customer has nothing more to ask (or the questions have run their course): now Juno wraps up.
-            if (forceWrap) return new Response(clean(polish(llm.say(), req, turns), wrapFallback()), null, all, true, "wrapup", "warm");
+            if (forceWrap) return new Response(clean(polish(llm.say(), req, turns), ph.wrap()), null, all, true, "wrapup", "warm");
 
             // Final questions: Juno answers what the customer asks, then offers to take more.
             if (qaMode) {
-                String say = clean(polish(llm.say(), req, turns), "Of course. What would you like to ask?");
-                if (!say.toLowerCase().contains("anything else")) say += " Is there anything else you'd like to ask?";
-                return new Response(say, null, all, false, "discovery", "reassuring");
+                if (Boolean.TRUE.equals(llm.noMore())) {
+                    // The model heard "nothing more" (needed for languages the quick English check cannot read): wrap up properly.
+                    Llm wrap = call(req, turns, false, true, false, false);
+                    return new Response(clean(polish(wrap.say(), req, turns), ph.wrap()), null, all, true, "wrapup", "warm");
+                }
+                String say = clean(polish(llm.say(), req, turns), ph.askAway());
+                if (english && !say.toLowerCase().contains("anything else")) say += " " + ph.anythingElse();
+                return new Response(say, null, all, false, "discovery", "reassuring", "qa", Boolean.TRUE);
             }
 
             Set<String> covered = new LinkedHashSet<>();
@@ -227,20 +241,23 @@ public class JunoService {
             boolean interviewDone = covered.size() == TOPICS.size() || mustWrapUp || Boolean.TRUE.equals(llm.done());
             if (interviewDone) {
                 // The interview is over, but the customer gets to ask their own questions before the hand-over.
-                String say = clean(polish(llm.say(), req, turns), CLOSING_FALLBACK);
-                if (!say.toLowerCase().contains(CLOSING_MARKER)) say = CLOSING_FALLBACK;
-                return new Response(say, null, all, false, "discovery", "warm");
+                String say = clean(polish(llm.say(), req, turns), ph.closing());
+                // English must contain the exact closing question; in other languages the model's own wording is trusted.
+                if (english && !say.toLowerCase().contains(CLOSING_MARKER)) say = ph.closing();
+                return new Response(say, null, all, false, "discovery", "warm", "closing", Boolean.TRUE);
             }
-            return new Response(clean(polish(llm.say(), req, turns), "Thank you. Could you tell me a little more about that?"),
-                    null, new ArrayList<>(covered), false, "discovery", llm.tone());
+            return new Response(clean(polish(llm.say(), req, turns), ph.tellMore()),
+                    null, new ArrayList<>(covered), false, "discovery", llm.tone(), null, llm.open());
         } catch (Exception e) {
             log.warn("JunoService: turn failed: {}", e.toString());
-            return new Response("Sorry, I missed that. Could you say it once more?", null, List.of(), false, consentPhase ? "consent" : "discovery", "warm");
+            return new Response(JunoPhrases.of(req.lang()).missed(), null, List.of(), false, consentPhase ? "consent" : "discovery", "warm");
         }
     }
 
     private Llm call(Request req, List<Turn> turns, boolean consentPhase, boolean mustWrapUp, boolean qaMode, boolean sensitive) throws Exception {
         StringBuilder u = new StringBuilder();
+        u.append("LANGUAGE: ").append(JunoPhrases.of(req.lang()).language()).append("\n");
+        if ("zh".equals(JunoPhrases.normalize(req.lang()))) u.append("In Chinese always use the polite form 您 (never 你) when speaking to the customer.\n");
         CustomerProfile profile = req.profileId() == null ? null : profileStore.findById(req.profileId()).orElse(null);
         u.append("FACTS ALREADY KNOWN: ").append(profile == null ? "none yet" : copilotService.knownFacts(profile)).append("\n");
         u.append("KNOWN FAMILY: ").append(knownFamily(profile)).append("\n");
@@ -249,7 +266,7 @@ public class JunoService {
             u.append("PRODUCT KNOWLEDGE (facts about those products; use at most one short line):\n").append(productKnowledge(turns)).append("\n");
         }
         if (mustWrapUp) u.append("INSTRUCTION: the customer has nothing more to ask. Wrap up now (done = true): thank them warmly, recap in one sentence what matters most to them, and say their advisor will take it from here.\n");
-        if (qaMode) u.append("FINAL QUESTIONS PHASE: the interview is over and the customer may now ask you questions. Answer their last message directly and briefly (general terms for products; their advisor for prices and personal advice), then ask: \"Is there anything else you'd like to ask?\" Do not ask interview questions. done = false.\n");
+        if (qaMode) u.append("FINAL QUESTIONS PHASE: the interview is over and the customer may now ask you questions. If they say they have nothing more to ask, set noMore true. Otherwise answer their last message directly and briefly (general terms for products; their advisor for prices and personal advice), then ask if there is anything else they would like to ask. Do not ask interview questions. done = false.\n");
         if (sensitive) u.append("SENSITIVE DATA ALERT: the customer just mentioned ID, card, bank or password details. Do not repeat them. Kindly say they should not share those here and that their advisor will handle them securely, then continue.\n");
         u.append("\nCONVERSATION SO FAR:\n");
         for (Turn t : turns) u.append("juno".equals(t.role()) ? "Juno: " : "Customer: ").append(t.text()).append("\n");
@@ -261,7 +278,7 @@ public class JunoService {
     }
 
     private static final java.util.regex.Pattern PRODUCT_TALK = java.util.regex.Pattern.compile(
-            "\\?|\\b(plan|plans|policy|policies|product|products|premium|premiums|cover|coverage|insurance|insured|interested|term life|life insurance|critical illness|invest|investment|retire|retirement|education|mortgage|recommend|offer|how much|what is|what's|tell me about)\\b",
+            "[?？]|保险|保费|计划|产品|投保|insurans|pelan|produk|premium|காப்பீடு|திட்டம்|\\b(plan|plans|policy|policies|product|products|premium|premiums|cover|coverage|insurance|insured|interested|term life|life insurance|critical illness|invest|investment|retire|retirement|education|mortgage|recommend|offer|how much|what is|what's|tell me about)\\b",
             java.util.regex.Pattern.CASE_INSENSITIVE);
 
     /** The family as the live analysis currently understands it (corrections already applied). */
@@ -310,7 +327,7 @@ public class JunoService {
      * contains a money amount or percentage the CUSTOMER did not say themselves is dropped (customers' own figures may
      * be echoed back, e.g. their budget).
      */
-    private String scrubFigures(String say, List<Turn> turns) {
+    private String scrubFigures(String say, List<Turn> turns, String lang) {
         if (say == null || !FIGURE.matcher(say).find()) return say;
         String said = turns.stream().filter(t -> "customer".equals(t.role()) && t.text() != null).map(Turn::text)
                 .reduce("", (a, b) -> a + " " + b).replace(",", "");
@@ -325,12 +342,12 @@ public class JunoService {
             if (!foreign) kept.append(!kept.isEmpty() ? " " : "").append(sentence);
         }
         return kept.isEmpty()
-                ? "I can't give figures like that, as they depend on your situation. Your advisor will go through the details with you."
+                ? JunoPhrases.of(lang).noFigures()
                 : kept.toString();
     }
 
     private String polish(String say, Request req, List<Turn> turns) {
-        return scrubFigures(firstNameOnly(say, req), turns);
+        return scrubFigures(firstNameOnly(say, req), turns, req.lang());
     }
 
     /** Product facts for the model, with every sentence that carries a figure or an illustration removed. */
@@ -360,7 +377,4 @@ public class JunoService {
         return say == null || say.isBlank() ? fallback : say.strip();
     }
 
-    private static String wrapFallback() {
-        return "Thank you so much for sharing all of that. Your advisor will review everything and take it from here.";
-    }
 }

@@ -71,13 +71,14 @@ public class JunoSpeechService {
     }
 
     /** MP3 audio for the text, or null if speech is not available (the caller falls back to the browser voice). */
-    public byte[] speak(String text, String voiceKind, String tone) {
+    public byte[] speak(String text, String voiceKind, String tone, String lang) {
         if (!enabled() || text == null || text.isBlank()) return null;
         String input = text.strip();
         if (input.length() > MAX_CHARS) input = input.substring(0, MAX_CHARS);
         String voice = "male".equalsIgnoreCase(voiceKind) ? voiceMale : voiceFemale;
         String toneKey = tone != null && TONES.containsKey(tone) ? tone : "warm";
-        String key = voice + "|" + toneKey + "|" + input;
+        String code = JunoPhrases.normalize(lang);
+        String key = voice + "|" + toneKey + "|" + code + "|" + input;
         byte[] hit = cache.get(key);
         if (hit != null) return hit;
         try {
@@ -85,7 +86,8 @@ public class JunoSpeechService {
             body.put("model", deployment);
             body.put("input", input);
             body.put("voice", voice);
-            body.put("instructions", BASE + " " + TONES.get(toneKey));
+            body.put("instructions", BASE + " " + TONES.get(toneKey)
+                    + ("en".equals(code) ? "" : " Speak " + JunoPhrases.of(code).language() + " naturally, like a native speaker, keeping 'AIA' and product names in English."));
             body.put("response_format", "mp3");
             String ep = endpoint();
             String base = ep.endsWith("/") ? ep.substring(0, ep.length() - 1) : ep;

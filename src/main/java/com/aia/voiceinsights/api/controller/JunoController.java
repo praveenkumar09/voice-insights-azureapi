@@ -33,9 +33,15 @@ public class JunoController {
     }
 
     /** Speaks a line: MP3 audio. 503 when speech is not available, so the browser falls back to its own voice. */
+    /** The fixed lines Juno says in a language (greeting, consent questions, goodbyes, acknowledgements). */
+    @org.springframework.web.bind.annotation.GetMapping(value = "/phrases", produces = MediaType.APPLICATION_JSON_VALUE)
+    public com.aia.voiceinsights.api.service.JunoPhrases.Phrases phrases(@org.springframework.web.bind.annotation.RequestParam(value = "lang", required = false) String lang) {
+        return com.aia.voiceinsights.api.service.JunoPhrases.of(lang);
+    }
+
     @PostMapping(value = "/speak", produces = "audio/mpeg")
     public ResponseEntity<byte[]> speak(@RequestBody Map<String, String> body) {
-        byte[] audio = speech.speak(body.get("text"), body.get("voice"), body.get("tone"));
+        byte[] audio = speech.speak(body.get("text"), body.get("voice"), body.get("tone"), body.get("lang"));
         if (audio == null) return ResponseEntity.status(503).build();
         return ResponseEntity.ok().header("Cache-Control", "private, max-age=3600").body(audio);
     }
