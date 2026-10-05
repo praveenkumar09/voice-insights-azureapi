@@ -50,6 +50,14 @@ public class JunoDebriefService {
     /** {@code dictation}: what the advisor said before handing over. {@code turns}: Juno and the advisor since ("juno" / "advisor"). */
     public record Request(String profileId, String dictation, List<JunoService.Turn> turns, String lang) {}
 
+    /** Same fields as {@link JunoService.Response} plus the fact-find readiness the meter on screen shows. */
+    public record DebriefTurn(String say, String consent, List<String> covered, boolean done, String stage, String tone, String marker,
+                              Boolean open, DebriefReadinessService.Readiness readiness) {
+        static DebriefTurn of(JunoService.Response r, DebriefReadinessService.Readiness readiness) {
+            return new DebriefTurn(r.say(), r.consent(), r.covered(), r.done(), r.stage(), r.tone(), r.marker(), r.open(), readiness);
+        }
+    }
+
     private record Llm(String say, List<String> covered, Boolean done, String tone, Boolean open) {}
 
     private static final String SYSTEM = """
@@ -90,7 +98,7 @@ public class JunoDebriefService {
               belongs to the customer or their family. A line that sounds like someone introducing themselves ("Hello, my
               name is Marcus") is a stray line, not an answer: ignore it.
             - A reply that is a single odd word or fragment which cannot answer your question ("Help", "Hello", "The") was
-              probably misheard: say you did not catch it and ask the same question again, briefly, once. Never treat it as an answer.
+              probably misheard: say you did not catch it and ask the SAME question again (not a different one), briefly, once. Never treat it as an answer.
             - The advisor may say "skip", "not discussed" or "I don't know": accept it warmly and move on without pressing.
               If they say they have nothing more to add or want to stop ("that's enough"), wrap up (done = true).
             - The DICTATION comes from speech recognition. After a pause or in background noise it sometimes holds stray lines
@@ -98,6 +106,10 @@ public class JunoDebriefService {
               premium"), a question to nobody, a phone-call script. Ignore them: never say or recap anything that appears only
               in such a line. If a significant fact (a sum, a product, a policy) appears only in an odd line and might be real,
               ask the advisor to confirm it instead of stating it.
+            - FACT-FIND READINESS lists the fact-find fields still missing, most valuable first (an estimate). Pick the question
+              whose answer fills the most valuable missing field that a meeting would plausibly have covered (for example marital
+              status, existing cover, smoker status, health, residency, employment); do not ask for savings or expense figures
+              unless the advisor mentioned finances. Do not mention the numbers while asking: only the final read-back does.
             - COMPLIANCE FLAGS lists risky things the advisor's own dictation says they told the customer (a promise, a
               guarantee, pressure). If it lists anything, raise the most serious one as your question, BEFORE any gap
               question: quote what they said in a few words, say in a few words why it is a risk, and ask how they want it
@@ -128,8 +140,9 @@ public class JunoDebriefService {
     private static final String WRAP_UP = """
             THIS TURN: wrap up now (done = true). In "say": thank the advisor briefly, then give a read-back in two or three
             short sentences of the most important things you now have about the customer and the meeting (include any
-            follow-up agreed), then say a draft follow-up message for the customer is ready on screen and ask them to check
-            the review below. Up to 65 words. Do not ask a question.
+            follow-up agreed), then say how many of the 26 fact-find fields are now captured (and how many were captured after the dictation,
+            both given as FACT-FIND NOW) and name the one or two biggest gaps left for next time, then say a draft follow-up
+            message for the customer is ready on screen and ask them to check the review below. Up to 80 words. Do not ask a question.
             """;
 
     private static final String NEXT = """
@@ -148,10 +161,16 @@ public class JunoDebriefService {
     private final ProductVectorSearchService productSearch;
     /** What applying for the products a customer's goals point to depends on, by profile: computed once per debrief. */
     private final Map<String, CompletableFuture<String>> needsCache = new ConcurrentHashMap<>();
+    private final DebriefReadinessService readinessService;
+    /** The latest readiness reading per debrief (used to choose the next question) and the reading right after the dictation. */
+    private final Map<String, DebriefReadinessService.Readiness> latestReadiness = new ConcurrentHashMap<>();
+    private final Map<String, Integer> baselineReadiness = new ConcurrentHashMap<>();
     private final ObjectMapper mapper = new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     public JunoDebriefService(@Qualifier("azureOpenAiChatModel") ChatModel chatModel, CustomerProfileStore profileStore,
-                              LiveCopilotService copilotService, ProductVectorSearchService productSearch) {
+                              LiveCopilotService copilotService, ProductVectorSearchService productSearch,
+                              DebriefReadinessService readinessService) {
+        this.readinessService = readinessService;
         this.chatModel = chatModel;
         this.profileStore = profileStore;
         this.copilotService = copilotService;
@@ -162,12 +181,17 @@ public class JunoDebriefService {
      * Called the moment the advisor taps "over to Juno": the product lookup (an embedding plus a few searches) runs while the
      * last words of the dictation are still being transcribed, so it adds nothing to the wait for Juno's first line.
      */
-    public void prepare(String profileId) {
+    public void prepare(String profileId, String dictation) {
         if (profileId == null || profileId.isBlank()) return;
+        // A first fact-find reading from what has been dictated so far, so the opening question can already target the biggest gaps.
+        CompletableFuture.runAsync(() -> {
+            var r = readinessService.assess(profileStore.findById(profileId).orElse(null), dictation, List.of());
+            if (r != null) latestReadiness.putIfAbsent(profileId, r);
+        });
         needsCache.computeIfAbsent(profileId, id -> CompletableFuture.supplyAsync(() -> lookUpProductNeeds(id, profileStore.findById(id).orElse(null), "")));
     }
 
-    public JunoService.Response next(Request req) {
+    public DebriefTurn next(Request req) {
         List<JunoService.Turn> turns = req.turns() == null ? List.of() : req.turns();
         JunoPhrases.Phrases ph = JunoPhrases.of(req.lang());
         List<String> all = JunoService.TOPICS;
@@ -178,32 +202,60 @@ public class JunoDebriefService {
             // The advisor has had enough, or the questions have run their course: read back and finish.
             boolean wrap = !opening && (ENOUGH.matcher(last).find() || asked >= MAX_QUESTIONS);
             CustomerProfile profile = req.profileId() == null ? null : profileStore.findById(req.profileId()).orElse(null);
-            Llm llm = call(req, turns, opening, wrap, asked, profile, "");
+            String pid = req.profileId();
+
+            // Fact-find readiness. The question is chosen from the PREVIOUS reading while the new one is worked out beside it, so the
+            // meter adds no wait. On the last turn the new reading comes first, because the read-back states it.
+            DebriefReadinessService.Readiness prev = pid == null ? null : latestReadiness.get(pid);
+            CompletableFuture<DebriefReadinessService.Readiness> fresh = null;
+            DebriefReadinessService.Readiness now = null;
+            if (wrap) now = readinessService.assess(profile, req.dictation(), turns);
+            else fresh = CompletableFuture.supplyAsync(() -> readinessService.assess(profile, req.dictation(), turns));
+
+            Llm llm = call(req, turns, opening, wrap, asked, profile, "", wrap && now != null ? now : prev,
+                    pid == null ? null : baselineReadiness.get(pid));
             String first = firstName(profile);
             // Reliability: never repeat a line Juno has already said (a stuck model would read as a stuck assistant).
             if (!wrap && !Boolean.TRUE.equals(llm.done()) && repeatsEarlierLine(llm.say(), turns)) {
                 llm = call(req, turns, opening, wrap, asked, profile,
-                        "Your previous attempt repeated something you already said. Say something different: move on to the next most valuable gap, or wrap up.");
+                        "Your previous attempt repeated something you already said. Say something different: move on to the next most valuable gap, or wrap up.",
+                        prev, null);
+            }
+            if (fresh != null) {
+                try { now = fresh.get(4, java.util.concurrent.TimeUnit.SECONDS); } catch (Exception e) { now = null; }
+            }
+            if (now == null) now = prev;
+            if (now != null && pid != null) {
+                if (opening) baselineReadiness.put(pid, now.captured());
+                latestReadiness.put(pid, now);
+                now = now.withBaseline(baselineReadiness.get(pid));
             }
 
             if (wrap || Boolean.TRUE.equals(llm.done())) {
-                return new JunoService.Response(neverAddressAs(clean(llm.say(), FALLBACK_WRAP), first), null, all, true, "wrapup", "warm", "wrap", null);
+                return DebriefTurn.of(new JunoService.Response(neverAddressAs(clean(llm.say(), FALLBACK_WRAP), first), null, all, true, "wrapup", "warm", "wrap", null), now);
             }
             Set<String> covered = new LinkedHashSet<>();
             if (llm.covered() != null) llm.covered().stream().map(String::toLowerCase).filter(JunoService.TOPICS::contains).forEach(covered::add);
-            return new JunoService.Response(oneQuestion(neverAddressAs(clean(llm.say(), FALLBACK_ASK), first)), null, new ArrayList<>(covered), false, "discovery",
-                    llm.tone() == null ? "curious" : llm.tone(), null, llm.open());
+            return DebriefTurn.of(new JunoService.Response(oneQuestion(neverAddressAs(clean(llm.say(), FALLBACK_ASK), first)), null, new ArrayList<>(covered), false, "discovery",
+                    llm.tone() == null ? "curious" : llm.tone(), null, llm.open()), now);
         } catch (Exception e) {
             log.warn("JunoDebriefService: turn failed: {}", e.toString());
-            return new JunoService.Response(ph.missed(), null, List.of(), false, "discovery", "warm");
+            return DebriefTurn.of(new JunoService.Response(ph.missed(), null, List.of(), false, "discovery", "warm"), null);
         }
     }
 
-    private Llm call(Request req, List<JunoService.Turn> turns, boolean opening, boolean wrap, int asked, CustomerProfile profile, String extraNote) throws Exception {
+    private Llm call(Request req, List<JunoService.Turn> turns, boolean opening, boolean wrap, int asked, CustomerProfile profile, String extraNote,
+                     DebriefReadinessService.Readiness readiness, Integer baseline) throws Exception {
         StringBuilder u = new StringBuilder();
         u.append("LANGUAGE: ").append(JunoPhrases.of(req.lang()).language()).append("\n");
         u.append("FACTS ALREADY KNOWN: ").append(profile == null ? "none yet" : copilotService.knownFacts(profile)).append("\n");
         u.append("KNOWN FAMILY: ").append(JunoService.knownFamily(profile)).append("\n");
+        if (readiness == null) u.append("FACT-FIND READINESS: not yet known\n");
+        else if (wrap) u.append("FACT-FIND NOW: ").append(readiness.captured()).append(" of ").append(readiness.total()).append(" fields captured")
+                .append(baseline == null ? "" : " (" + baseline + " after the dictation)").append("; biggest gaps left: ")
+                .append(String.join(", ", readiness.missing().stream().limit(3).toList())).append("\n");
+        else u.append("FACT-FIND READINESS (estimate): ").append(readiness.captured()).append(" of ").append(readiness.total())
+                .append(" captured. STILL MISSING, most valuable first: ").append(String.join(", ", readiness.missing().stream().limit(8).toList())).append("\n");
         u.append("COMPLIANCE FLAGS: ").append(complianceFlags(profile)).append("\n");
         u.append("PRODUCT NEEDS:\n").append(productNeeds(req.profileId(), profile, req.dictation())).append("\n");
         String dictation = req.dictation() == null ? "" : req.dictation().strip();

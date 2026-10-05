@@ -273,6 +273,13 @@ public class AdvicePackService {
         FACT_FIND.put("Health & risk profile", List.of(new Spec("health", "Health conditions"), new Spec("familyHealthHistory", "Family health history"),
                 new Spec("riskAppetite", "Risk appetite")));
     }
+    /** The fact-find's fields as {key, label}, in pack order. Read-only: the debrief's readiness meter counts against this same list. */
+    static List<String[]> factFindFields() {
+        List<String[]> out = new ArrayList<>();
+        FACT_FIND.values().forEach(specs -> specs.forEach(s -> out.add(new String[]{s.key(), s.label()})));
+        return out;
+    }
+
     /** Keys the model is asked for; the rest come straight from the extracted profile. */
     private static final List<String> LLM_KEYS = List.of("maritalStatus", "residency", "smoker", "childrenAges", "employmentType", "incomeStability",
             "monthlyExpenses", "savings", "investments", "property", "liabilities", "retirementSavings", "retirementAge", "educationGoal",

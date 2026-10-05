@@ -54,14 +54,14 @@ public class JunoController {
 
     /** Debrief with Juno: what Juno says to the advisor next, after the advisor's dictation. */
     @PostMapping(value = "/debrief-turn", produces = MediaType.APPLICATION_JSON_VALUE)
-    public JunoService.Response debriefTurn(@RequestBody JunoDebriefService.Request request) {
+    public JunoDebriefService.DebriefTurn debriefTurn(@RequestBody JunoDebriefService.Request request) {
         return debrief.next(request);
     }
 
     /** Warms what Juno needs for its first line while the advisor's last words are still being transcribed. */
     @PostMapping(value = "/debrief-prepare")
     public ResponseEntity<Void> debriefPrepare(@RequestBody Map<String, String> body) {
-        debrief.prepare(body.get("profileId"));
+        debrief.prepare(body.get("profileId"), body.get("dictation"));
         return ResponseEntity.accepted().build();
     }
 
