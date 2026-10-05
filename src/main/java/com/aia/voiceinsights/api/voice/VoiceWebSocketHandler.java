@@ -96,11 +96,13 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         // ?mode=debrief: the advisor is dictating a summary after the meeting rather than the customer speaking live.
         String modeParam = org.springframework.web.util.UriComponentsBuilder.fromUri(wsSession.getUri())
                 .build().getQueryParams().getFirst("mode");
-        boolean debrief = "debrief".equalsIgnoreCase(modeParam);
+        // ?mode=juno-debrief: the advisor dictates, then Juno asks them about the gaps. Analysed like a debrief.
+        boolean junoDebrief = "juno-debrief".equalsIgnoreCase(modeParam);
+        boolean debrief = "debrief".equalsIgnoreCase(modeParam) || junoDebrief;
         // ?mode=juno: the AI host (Juno) is talking with the customer; it is analysed like a live conversation.
         boolean juno = "juno".equalsIgnoreCase(modeParam);
         CustomerProfile fresh = new CustomerProfile();
-        fresh.setCaptureMode(debrief ? "DEBRIEF" : juno ? "JUNO" : "LIVE");
+        fresh.setCaptureMode(junoDebrief ? "JUNO_DEBRIEF" : debrief ? "DEBRIEF" : juno ? "JUNO" : "LIVE");
         CustomerProfile profile = profileStore.save(fresh);
         VoiceSession vs = new VoiceSession(profile, debrief);
         sessions.put(wsSession.getId(), vs);
@@ -119,6 +121,13 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
      * silently — so the combined prompt is always trimmed (at a word boundary) to stay safely under it.
      */
     private static final int MAX_PROMPT_CHARS = 1000;
+
+    /** A line made only of greetings and filler ("Hello. Hello. The"): never something an advisor says in a debrief. */
+    private static final java.util.regex.Pattern GREETING_ONLY = java.util.regex.Pattern.compile(
+            "^(?:\\W*\\b(?:hi|hello|hey|hola|bye|goodbye|thanks?|thank|you|the|a|an)\\b)+\\W*$", java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /** Any letter that is not Latin script. */
+    private static final java.util.regex.Pattern OTHER_SCRIPT = java.util.regex.Pattern.compile("[\\p{L}&&[^\\p{IsLatin}]]");
 
     /** The context prompt plus the name hint list — the model spells a name correctly far more often when it has seen it. */
     private String transcriptionPrompt() {
@@ -139,9 +148,23 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         return trimmed;
     }
 
+    /**
+     * A debrief with Juno sends the speech model NO topic prompt. The usual one lists names and insurance terms, and (for Juno)
+     * the names already mentioned; even a plain description ("an advisor dictating notes about a meeting") is enough for the
+     * model to write plausible notes of its own when it hears room noise ("I met with Mr. Tan this afternoon… retirement
+     * planning"), which then flow into the profile. With nothing to build on, noise yields at most a stray word. Names are
+     * checked by the advisor on the review screen instead.
+     */
+    private String promptFor(VoiceSession vs, String dynamic) {
+        if (!"JUNO_DEBRIEF".equals(vs.profile.getCaptureMode())) return transcriptionPrompt(dynamic);
+        if ("en".equals(vs.lang)) return "";
+        return "The advisor is speaking " + com.aia.voiceinsights.api.service.JunoPhrases.of(vs.lang).language()
+                + " (they may mix in English words). Transcribe in the language spoken.";
+    }
+
     private void connectTranscriptionClient(WebSocketSession wsSession, VoiceSession vs) {
         vs.transcriptionClient = new AzureOpenAiRealtimeTranscriptionClient(realtimeUrl, azureApiKey, transcriptionModel,
-                transcriptionPrompt(),
+                promptFor(vs, ""),
                 new AzureOpenAiRealtimeTranscriptionClient.Listener() {
                     @Override
                     public void onPartialTranscript(String text) {
@@ -155,6 +178,16 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                     @Override
                     public void onFinalTranscript(String raw) {
                         String text = redact(raw); // ID and card numbers are never stored or shown
+                        // A debrief with Juno in English: a line in another script (Tamil, Chinese...) is the speech model
+                        // inventing words from background noise, not the advisor. It is dropped before anything reads it.
+                        if ("JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()) && "en".equals(vs.lang) && GREETING_ONLY.matcher(text).matches()) {
+                            System.out.println("[voice-stt] dropped a stray greeting in a debrief");
+                            return;
+                        }
+                        if ("JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()) && "en".equals(vs.lang) && OTHER_SCRIPT.matcher(text).find()) {
+                            System.out.println("[voice-stt] dropped a stray non-English line in an English debrief");
+                            return;
+                        }
                         vs.reconnectAttempts = 0; // a real transcript flowed — the connection is healthy again
                         vs.partial.setLength(0);
                         vs.transcript.append(text).append(" ");
@@ -191,6 +224,8 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                                 delaySeconds, TimeUnit.SECONDS);
                     }
                 });
+        // A debrief with Juno starts as a normal dictation (strict: little speech is never turned into words) and switches to
+        // conversational timing only when the advisor hands over to Juno (see the "conversational" message).
         if ("JUNO".equals(vs.profile.getCaptureMode())) vs.transcriptionClient.setConversational(true);
         vs.transcriptionClient.connect().exceptionally(ex -> {
             sendJsonQuiet(wsSession, Map.of("type", "error", "message", "Failed to connect to Azure OpenAI realtime: " + ex.getMessage()));
@@ -219,25 +254,34 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             vs.transcriptionClient.commit();
             return;
         }
+        // "conversational": the advisor handed over to Juno, whose questions are answered in short replies.
+        if ("conversational".equals(node.path("type").asText("")) && "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()) && vs.transcriptionClient != null) {
+            vs.transcriptionClient.setConversational(node.path("on").asBoolean(true));
+            return;
+        }
         // "language": the customer (or advisor) chose another language — tell the speech model what to expect.
         if ("language".equals(node.path("type").asText(""))) {
             vs.lang = com.aia.voiceinsights.api.service.JunoPhrases.normalize(node.path("lang").asText("en"));
-            if (vs.transcriptionClient != null) vs.transcriptionClient.updatePrompt(transcriptionPrompt(nameContext(vs, "")));
+            if (vs.transcriptionClient != null) vs.transcriptionClient.updatePrompt(promptFor(vs, nameContext(vs, "")));
             return;
         }
         // "agent_say": Juno spoke. Its words go into the transcript, labelled, so the customer's short answers
         // ("two, a boy and a girl") are analysed together with the question they answer.
-        if ("agent_say".equals(node.path("type").asText("")) && "JUNO".equals(vs.profile.getCaptureMode())) {
+        if ("agent_say".equals(node.path("type").asText("")) && ("JUNO".equals(vs.profile.getCaptureMode()) || "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()))) {
             String said = node.path("text").asText("").strip();
-            if (!said.isEmpty() && said.length() < 600) vs.transcript.append("\n[Juno] ").append(said).append("\n[Customer] ");
-            if (!said.isEmpty() && vs.transcriptionClient != null) vs.transcriptionClient.updatePrompt(transcriptionPrompt(nameContext(vs, said)));
+            // In a debrief the person answering is the advisor; in a hosted conversation it is the customer.
+            String answerer = "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()) ? "[Advisor] " : "[Customer] ";
+            if (!said.isEmpty() && said.length() < 600) vs.transcript.append("\n[Juno] ").append(said).append("\n").append(answerer);
+            if (!said.isEmpty() && vs.transcriptionClient != null) vs.transcriptionClient.updatePrompt(promptFor(vs, nameContext(vs, said)));
             return;
         }
         if ("stop".equals(node.path("type").asText(""))) {
             // Safety flush: server_vad auto-commits at real pauses, but if the
             // agent stops mid-utterance (no pause yet when they hit stop),
             // nothing has committed that trailing bit yet — commit it explicitly.
-            if (vs.transcriptionClient != null) vs.transcriptionClient.commit();
+            // "flush": false once Juno has read back and the debrief is over: whatever the microphone heard since is noise, and
+            // committing it made the speech model invent a paragraph that was filed as the advisor's words.
+            if (node.path("flush").asBoolean(true) && vs.transcriptionClient != null) vs.transcriptionClient.commit();
             extractionExecutor.submit(() -> finalizeSession(wsSession, vs));
         }
     }
@@ -260,7 +304,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         // the final (safety-flush) commit above.
         try { Thread.sleep(1500); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
 
-        extractionService.extractInto(vs.profile, vs.transcript.toString(), vs.debrief);
+        extractionService.extractInto(vs.profile, vs.transcript.toString(), vs.debrief, "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()));
         // Last live pass over the complete transcript, so the snapshot handed to the analysis
         // stage (and the live-vs-final comparison) is the best the live layer can produce.
         analyseAndRecord(vs);
@@ -279,7 +323,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     }
 
     private void reExtractAndPush(WebSocketSession wsSession, VoiceSession vs) {
-        extractionService.extractInto(vs.profile, vs.transcript.toString(), vs.debrief);
+        extractionService.extractInto(vs.profile, vs.transcript.toString(), vs.debrief, "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()));
         profileStore.save(vs.profile);
         sendJsonQuiet(wsSession, Map.of("type", "profile", "profile", vs.profile));
     }
@@ -389,7 +433,8 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         VoiceSession(CustomerProfile profile, boolean debrief) {
             this.profile = profile;
             this.debrief = debrief;
-            this.copilotState = new LiveCopilotService.State(debrief);
+            this.copilotState = new LiveCopilotService.State(debrief)
+                    .specificChildrenReplaceGeneric("JUNO_DEBRIEF".equals(profile.getCaptureMode()));
         }
     }
 }

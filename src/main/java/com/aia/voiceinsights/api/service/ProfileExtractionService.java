@@ -61,6 +61,18 @@ public class ProfileExtractionService {
             you extract is about the CUSTOMER (the person being described), never about the advisor.
             """;
 
+    /** In a debrief with Juno: the advisor's dictation, then Juno's questions and the advisor's answers, with the speech model's stray lines to ignore. */
+    private static final String JUNO_DEBRIEF_NOTE = """
+
+            The transcript may also contain lines labelled [Juno] (an AI assistant's questions to the advisor) and [Advisor]
+            (the advisor's answers). Take facts ONLY from the advisor's words (unlabelled or [Advisor]); a [Juno] line is
+            a question or read-back, never a source of facts.
+            The transcript comes from speech recognition. After a pause or in background noise it sometimes invents stray lines
+            that have nothing to do with the meeting: a greeting, a stray name, a list of insurance terms ("CPF, MediSave,
+            premium"), a question to nobody, a phone-call script. Ignore such lines. Never take a fact from a line that does not
+            fit the rest of what the advisor said.
+            """;
+
     private final ChatModel chatModel;
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -74,11 +86,16 @@ public class ProfileExtractionService {
     }
 
     public void extractInto(CustomerProfile profile, String transcript, boolean debrief) {
+        extractInto(profile, transcript, debrief, false);
+    }
+
+    /** {@code junoDebrief}: the advisor is working with Juno, so the transcript carries labels and possible stray lines. */
+    public void extractInto(CustomerProfile profile, String transcript, boolean debrief, boolean junoDebrief) {
         if (transcript == null || transcript.isBlank()) return;
 
         try {
             var response = chatModel.call(new Prompt(
-                    List.of(new SystemMessage(debrief ? SYSTEM_PROMPT + DEBRIEF_ADDENDUM : SYSTEM_PROMPT),
+                    List.of(new SystemMessage(debrief ? SYSTEM_PROMPT + DEBRIEF_ADDENDUM + (junoDebrief ? JUNO_DEBRIEF_NOTE : "") : SYSTEM_PROMPT),
                             new UserMessage("Transcript so far:\n" + transcript)),
                     AzureOpenAiChatOptions.builder().responseFormat(JSON_FORMAT).build()));
 

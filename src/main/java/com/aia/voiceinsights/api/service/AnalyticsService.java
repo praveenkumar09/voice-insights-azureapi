@@ -184,7 +184,7 @@ public class AnalyticsService {
         Collections.sort(secs);
         double avgSecs = secs.stream().mapToDouble(Double::doubleValue).average().orElse(0);
         double medianSecs = secs.isEmpty() ? 0 : secs.get(secs.size() / 2);
-        int debrief = (int) analysed.stream().filter(p -> "DEBRIEF".equals(p.getCaptureMode())).count();
+        int debrief = (int) analysed.stream().filter(p -> "DEBRIEF".equals(p.getCaptureMode()) || "JUNO_DEBRIEF".equals(p.getCaptureMode())).count();
         Ops ops = new Ops(round1(avgSecs), round1(medianSecs), packs, reviewed, analysed.size() - debrief, debrief);
 
         if (!secs.isEmpty()) takeaways.add("From conversation to a full recommendation takes %.0f seconds on average across %d runs."

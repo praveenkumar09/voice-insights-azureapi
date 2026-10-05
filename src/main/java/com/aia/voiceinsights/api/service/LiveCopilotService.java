@@ -136,6 +136,18 @@ public class LiveCopilotService {
     private record AskLlm(String trigger, String kind, List<String> questions) {}
 
     /** The transcript carries [Juno] (AI host) and [Customer] labels, because the conversation is hosted by an AI assistant. */
+    /** Appended in a debrief with Juno: its questions are labelled and are not a source of facts; stray lines are ignored. */
+    private static final String JUNO_DEBRIEF_NOTE = """
+
+            The transcript may also contain lines labelled [Juno] (an AI assistant's questions to the advisor) and [Advisor]
+            (the advisor's answers). Use only the advisor's words (unlabelled or [Advisor]) for facts and quotes; never
+            quote or flag [Juno] lines.
+            The transcript comes from speech recognition. After a pause or in background noise it sometimes invents stray lines
+            that have nothing to do with the meeting: a greeting, a stray name, a list of insurance terms ("CPF, MediSave,
+            premium"), a question to nobody, a phone-call script. Ignore such lines. Never take a fact from a line that does not
+            fit the rest of what the advisor said.
+            """;
+
     private static final String JUNO_ADDENDUM = """
 
             MODE: JUNO. The transcript is labelled: lines starting [Juno] are the AI host AIA's Juno, the rest is
@@ -175,6 +187,12 @@ public class LiveCopilotService {
         private final boolean debrief;
         public State() { this(false); }
         public State(boolean debrief) { this.debrief = debrief; }
+        /**
+         * Debrief with Juno only: an unnamed "son" or "daughter" already says which child it is, so a generic "child" heard earlier
+         * (or later) is dropped instead of being listed beside them. The other capture modes keep their existing behaviour.
+         */
+        private boolean specificChildrenReplaceGeneric;
+        public State specificChildrenReplaceGeneric(boolean on) { this.specificChildrenReplaceGeneric = on; return this; }
         private CopilotInsights previous;
         private final Set<String> retiredQuestions = new LinkedHashSet<>();
         private List<String> currentQuestions = List.of();
@@ -209,7 +227,7 @@ public class LiveCopilotService {
             CompletableFuture<AskLlm> askCall = state.debrief || "JUNO".equals(profile.getCaptureMode()) ? null
                     : CompletableFuture.supplyAsync(() -> askNextCall(profile, tail, state));
             var response = chatModel.call(new Prompt(
-                    List.of(new SystemMessage(state.debrief ? SYSTEM_PROMPT + DEBRIEF_ADDENDUM
+                    List.of(new SystemMessage(state.debrief ? SYSTEM_PROMPT + DEBRIEF_ADDENDUM + ("JUNO_DEBRIEF".equals(profile.getCaptureMode()) ? JUNO_DEBRIEF_NOTE : "")
                                     : "JUNO".equals(profile.getCaptureMode()) ? SYSTEM_PROMPT + JUNO_ADDENDUM : SYSTEM_PROMPT),
                             new UserMessage(buildUserMessage(profile, tail, state))),
                     AzureOpenAiChatOptions.builder().responseFormat(JSON_FORMAT).build()));
@@ -314,6 +332,14 @@ public class LiveCopilotService {
     private static final int MAX_PEOPLE = 5;
     private static final Set<String> GENERIC_CHILD = Set.of("child", "children", "kid", "kids", "baby");
     private static final Set<String> NAMEABLE_CHILD = Set.of("son", "daughter", "child", "kid", "baby");
+    private static final Set<String> SPECIFIC_CHILD = Set.of("son", "daughter");
+
+    /** Is there already a child on the map that makes a generic "child" redundant? */
+    private static boolean hasSpecificChild(State state, List<Person> people) {
+        return people.stream().anyMatch(o -> o.relation() != null && (
+                (o.name() != null && NAMEABLE_CHILD.contains(o.relation().toLowerCase()))
+                || (state.specificChildrenReplaceGeneric && SPECIFIC_CHILD.contains(o.relation().toLowerCase()))));
+    }
     private static final int MAX_CONCERNS = 4;
     /** Same 0-100 fit scale as the live product matches; below this a product is not offered as an idea. */
     private static final int IDEA_MIN_FIT = 30;
@@ -363,7 +389,7 @@ public class LiveCopilotService {
                 String rel = p.relation().trim();
                 String name = p.name() == null || p.name().isBlank() || p.name().equalsIgnoreCase("null") || nonLatin(p.name()) ? null : p.name().trim();
                 // "we have two children" is a generic child; once the children are named it only duplicates them.
-                if (name == null && GENERIC_CHILD.contains(rel.toLowerCase()) && people.stream().anyMatch(o -> o.name() != null && NAMEABLE_CHILD.contains(o.relation().toLowerCase()))) continue;
+                if (name == null && GENERIC_CHILD.contains(rel.toLowerCase()) && hasSpecificChild(state, people)) continue;
                 int existing = -1;
                 for (int i = 0; i < people.size(); i++) {
                     Person o = people.get(i);
@@ -379,7 +405,7 @@ public class LiveCopilotService {
         }
 
         // A generic child heard before the names were: drop it once a named child exists.
-        if (people.stream().anyMatch(o -> o.name() != null && NAMEABLE_CHILD.contains(o.relation().toLowerCase()))) {
+        if (hasSpecificChild(state, people)) {
             people.removeIf(o -> o.name() == null && GENERIC_CHILD.contains(o.relation().toLowerCase()));
         }
 

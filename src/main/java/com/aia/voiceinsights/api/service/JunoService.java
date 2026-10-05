@@ -282,7 +282,7 @@ public class JunoService {
             java.util.regex.Pattern.CASE_INSENSITIVE);
 
     /** The family as the live analysis currently understands it (corrections already applied). */
-    private static String knownFamily(CustomerProfile profile) {
+    static String knownFamily(CustomerProfile profile) {
         try {
             var snap = profile == null ? null : profile.getLiveInsights();
             var map = snap == null || snap.latest() == null ? null : snap.latest().lifeMap();
@@ -351,7 +351,7 @@ public class JunoService {
     }
 
     /** Product facts for the model, with every sentence that carries a figure or an illustration removed. */
-    private static String withoutFigures(String text) {
+    static String withoutFigures(String text) {
         StringBuilder out = new StringBuilder();
         for (String sentence : text.split("(?<=[.!?])\\s+")) {
             if (!FIGURE_SENTENCE.matcher(sentence).find()) out.append(!out.isEmpty() ? " " : "").append(sentence);

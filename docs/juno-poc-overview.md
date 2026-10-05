@@ -2,7 +2,7 @@
 
 **AIA Singapore · Proof of concept overview**
 
-An AI assistant that listens to advisor and customer conversations, understands what the customer needs, drafts the paperwork, and can hold a first conversation by itself in English, Mandarin, Malay or Tamil. The advisor stays in charge of every decision.
+An AI assistant that listens to advisor and customer conversations, understands what the customer needs, drafts the paperwork, and helps the advisor debrief a meeting completely, in English, Mandarin, Malay or Tamil. The advisor stays in charge of every decision.
 
 | | |
 |---|---|
@@ -19,7 +19,7 @@ An AI assistant that listens to advisor and customer conversations, understands 
 
 Advisors lose hours after every meeting to notes, fact-finds, records of advice and follow-ups, while customers wait for answers and managers have little view of conversation quality. Voice Insights turns the conversation itself into structured insight and draft documents within about half a minute.
 
-Its newest part, **Juno**, is an AI host that greets the customer, asks permission to record, interviews them about family, goals, worries and budget, answers their questions without quoting prices, and then hands over to the advisor. Only a human can start the analysis or sign off the advice pack.
+Its newest part, **Juno**, is the advisor's debrief partner. After a meeting the advisor dictates what happened, then Juno says what it understood, asks a few short questions about anything missing or unclear, and reads it back. Juno does not talk to customers: an early demo showed that when an advisor and an AI host are together, customers may prefer the advisor, so Juno now works for the advisor instead. Only a human can start the analysis or sign off the advice pack.
 
 The POC asks one question: **does this save advisor time and improve conversation quality, safely enough to scale?**
 
@@ -27,7 +27,7 @@ The POC asks one question: **does this save advisor time and improve conversatio
 
 | | |
 |---|---|
-| **3** | ways to capture a conversation: after the meeting, live with the customer, or hosted by Juno |
+| **3** | ways to capture a conversation: dictated alone after the meeting, live with the customer, or dictated and then checked with Juno |
 | **11** | specialised AI agents analyse each case, three of them in parallel |
 | **~30–40 s** | from conversation to a full recommendation (observed 26–58 s) |
 | **4** | languages: English by default, plus Mandarin, Malay and Tamil |
@@ -53,7 +53,7 @@ One platform with three ways in, a team of AI agents behind it, and the advisor 
 
 **How a conversation flows**
 
-1. **Capture:** advisor dictates, records live, or lets Juno host the conversation.
+1. **Capture:** advisor dictates, records live, or dictates and lets Juno check for gaps.
 2. **Understand:** needs, mood, buying interest, family map and risk flags appear as people speak.
 3. **Analyse:** 11 agents produce a grounded recommendation with evidence.
 4. **Draft:** report, customer proposal, goals plan and advice pack.
@@ -65,15 +65,21 @@ One platform with three ways in, a team of AI agents behind it, and the advisor 
 |---|---|---|
 | **After the meeting** | The advisor, earlier | The advisor dictates a summary; the app structures it and checks for gaps. |
 | **With the customer** | The advisor, live | Listens to the real conversation, coaches the advisor with the next best question and flags risky statements as they happen. |
-| **Juno, the AI host** | Juno | Greets, asks permission, interviews, answers questions, then hands over to the advisor. |
+| **Debrief with Juno** | The advisor, earlier | The advisor dictates freely, then Juno says what it understood and asks up to five short questions about gaps, then reads back. |
 
-### Juno, in more detail
+### Debrief with Juno, in more detail
 
-- **Consent first.** Juno asks permission to record and analyse. A clear refusal, or two uncertain answers, ends the chat and deletes it.
-- **A real conversation.** It covers six topics (about you, family, goals, concerns, budget, existing cover), reacts to what was said, takes the customer's own questions, and can be interrupted mid-sentence.
-- **Four languages.** English by default; Mandarin, Malay or Tamil chosen on screen, even mid-conversation. Records and analysis stay in English.
-- **Safe by design.** Juno may name an AIA product when asked, then hands over. It never gives a price, return or guarantee, never says a product suits the customer, removes ID and card numbers, and says plainly that it is an AI.
+- **Dictate first.** The advisor briefs Juno on the meeting in their own words, the same as in *After the meeting*. Juno stays quiet and listens. The advisor taps **Done, over to Juno** when finished, so Juno never interrupts a pause.
+- **Juno checks for gaps.** It says in a sentence or two what it understood, then asks **at most five short questions**, one at a time, about what is missing or unclear: a dependant's age, whether a budget is monthly or yearly, what the customer objected to, what was agreed as a follow-up. It never asks about something already said, and the advisor can answer "skip" or "that's enough" at any point.
+- **Compliance catch.** If the advisor's own dictation holds a promise or guarantee, Juno raises it first and asks how to record it. The flag also appears in a Compliance watch card and in the final report.
+- **Questions that follow the products.** Juno uses the product documents to ask for the missing fact an application typically depends on (for example, smoker status), without recommending anything or quoting a price.
+- **Read-back and review.** Juno summarises what it has in two or three sentences and says a follow-up draft is ready. The advisor corrects anything on the review screen, which is unchanged.
+- **Follow-up ready at the end.** A WhatsApp draft for the customer in English, Mandarin, Malay or Tamil, with an English check line, no prices or product names. The advisor edits and sends it; nothing is sent from the app.
+- **Hands-free and a time counter.** The advisor can say "over to you" instead of tapping, and the screen shows how long the debrief took against the manual write-up planning assumption.
+- **Four languages.** English by default; Mandarin, Malay or Tamil chosen on screen. Records and analysis stay in English.
+- **Safe by design.** Juno only asks and reads back. It is instructed not to recommend products or quote prices (by prompt, checked in the September test pack), and takes facts only from what the advisor says.
 - **Human in control.** Juno cannot start the analysis. The button only responds to a real person's click.
+- **After the meeting stays as it is.** Advisors who prefer to dictate and review alone keep that mode unchanged. Because both modes are recorded separately, the pilot can compare them directly. See [juno-debrief-plan.md](juno-debrief-plan.md).
 
 ### What the advisor receives
 
@@ -93,7 +99,7 @@ Four months, four phases, each ending with a decision point.
 |---|---|---|
 | **July** | Discover and design | Advisor workshops and baseline time study; agree success measures; compliance and PDPA assessment starts; Azure environment and product document scope |
 | **August** | Build the core | Live capture, copilot and 11-agent analysis in the AIA environment; product documents ingested; advice pack and admin dashboard |
-| **September** | Juno and languages | Juno host, guardrails, interruption; Mandarin, Malay and Tamil with native-speaker review; compliance review of prompts and disclosures |
+| **September** | Juno debrief and languages | Debrief with Juno, question limits and guardrails; Mandarin, Malay and Tamil with native-speaker review; compliance review of prompts |
 | **October** | Pilot and evaluate | Controlled pilot with a small advisor group; measure against the July baseline; security and privacy review; go or no-go report |
 
 ### Milestones and exit criteria
@@ -102,10 +108,10 @@ Four months, four phases, each ending with a decision point.
 |---|---|---|
 | July | Scope and measures approved | Baseline measured; KPIs, risks and compliance approach signed off |
 | August | Core demo on internal data | A full case runs from conversation to a signed-off advice pack |
-| September | Juno compliance sign-off | Juno passes a scripted test pack: consent, no prices, no guarantees, ID redaction, correct language |
+| September | Juno debrief sign-off | Juno passes a scripted test pack: never invents a fact, never recommends or quotes a price, asks at most five questions, never repeats what was dictated, correct language |
 | October | Pilot results | Results against the targets in section 6; recommendation to scale, adjust or stop |
 
-> **Where we are:** a working end-to-end prototype already runs every capability described in section 2, and has been tested with spoken conversations in all four languages. The timeline above plans how the POC takes it from prototype to a measured, compliance-reviewed pilot inside the AIA environment.
+> **Where we are:** a working end-to-end prototype runs the capabilities described in section 2. The earlier Juno host was tested with spoken conversations in all four languages. **Debrief with Juno is newly built and has been tested with scripted spoken debriefs in English only** (synthetic voice, one customer scenario); testing with real advisors and in Mandarin, Malay and Tamil is part of September. The timeline above plans how the POC takes it from prototype to a measured, compliance-reviewed pilot inside the AIA environment.
 
 ---
 
@@ -170,12 +176,12 @@ If the team is drawn from existing AIA staff, the extra cash outlay is mainly ev
 | Component | Approx. USD per conversation |
 |---|---:|
 | Speech to text (about 5 minutes of audio) | 0.03 |
-| Juno's replies and live insights (gpt-4.1) | 0.10 – 0.15 |
+| Juno's questions and live insights (gpt-4.1) | 0.05 – 0.10 |
 | 11-agent analysis and advice pack (gpt-4.1) | 0.10 – 0.20 |
-| Juno's voice (about 2 minutes of speech) | 0.02 – 0.05 |
+| Juno's voice (about 1 minute of speech) | 0.01 – 0.03 |
 | **Total** | **≈ 0.25 – 0.45 (about SGD 0.35 – 0.60)** |
 
-> **Read these figures as estimates.** Team rates are placeholders for Finance to confirm. Model costs come from public list prices at the time of writing and move with usage and contract terms, so they should be checked against AIA's Azure agreement. Repeated lines such as Juno's greeting are cached, which lowers the voice cost over time.
+> **Read these figures as estimates.** Team rates are placeholders for Finance to confirm. Model costs come from public list prices at the time of writing and move with usage and contract terms, so they should be checked against AIA's Azure agreement. Juno's per-conversation lines in the debrief are fewer and shorter than the earlier customer-hosted design, so these two lines are expected to be lower; they are not yet measured.
 
 ---
 
@@ -184,7 +190,7 @@ If the team is drawn from existing AIA staff, the extra cash outlay is mainly ev
 - **Efficiency: advisor time back.** Notes, fact-find, record of advice, follow-up and CRM note drafted automatically. The advisor reviews instead of writing.
 - **Quality: fewer missed needs.** Every conversation gets the same structured view. Missing facts are listed so the next meeting starts with the right questions.
 - **Compliance: risk caught live.** Risky statements are flagged during the conversation, evidence is cited for every recommendation, and every pack carries an advisor sign-off.
-- **Customers: faster, in their language.** Quicker follow-up, a first conversation available in four languages, and a record that reflects what they actually said.
+- **Customers: faster, more accurate follow-up.** Quicker follow-up, advisors able to debrief in the language they are comfortable with, and a record that is more complete and reflects what was actually said.
 - **Leadership: visibility.** A live view of volume, quality, needs and time to recommendation across advisors and periods.
 
 ### Illustrative sizing
@@ -208,7 +214,8 @@ This is an example, not a forecast. The POC replaces each input with a measured 
 | Follow-up sent within 24 hours | 90% of pilot cases |
 | Fact-find fields captured or flagged as missing | At least 80% completeness |
 | Advice packs reviewed and signed off by the advisor | 100% (no pack used unsigned) |
-| Juno compliance test pack | 100% pass: consent, no prices or guarantees, ID redaction, correct language |
+| Juno debrief test pack | 100% pass: no invented facts, no recommendations or prices, at most five questions, correct language |
+| Fact-find completeness with Juno debrief | Higher than dictation alone, measured against the same advisors |
 | Advisor satisfaction | 4 out of 5 or better |
 | Time to a full recommendation | Under 60 seconds |
 | Running cost per conversation | Under SGD 1 |
@@ -219,11 +226,11 @@ This is an example, not a forecast. The POC replaces each input with a measured 
 
 Transcription and summaries are common. These are the parts that are not.
 
-- **An AI host that earns trust.** Juno asks permission first, speaks warmly with a natural voice, can be interrupted like a person, answers the customer's own questions, and refuses to quote prices or promise returns.
+- **An AI colleague, not a replacement.** Juno works for the advisor, not in front of the customer. It listens first, speaks warmly with a natural voice, can be interrupted like a person, and asks only the few questions that matter.
 - **Built for Singapore.** Four languages chosen on screen, switchable mid-conversation, with records kept in English so analysis and audit stay consistent.
-- **The conversation made visible.** A live life map draws the customer's family, hopes and worries as they speak, and a panel shows what Juno has learned, topic by topic.
+- **The conversation made visible.** A live life map draws the customer's family, hopes and worries as they speak, and a panel shows what Juno has so far, topic by topic, so the gaps are visible before Juno asks.
 - **A team of agents you can watch.** Eleven specialists in four phases, three working in parallel, each showing its one-line conclusion and full reasoning.
-- **Guardrails in layers.** For prices and returns: instructions to the model, figures removed from what it reads, and a final check that drops any figure the customer did not say first.
+- **Guardrails by design.** Juno speaks only to the advisor, is instructed not to advise, quote prices or invent facts, caps its questions at five, cannot start the analysis, and the advisor confirms every fact on the review screen. The prompt rules are not yet backed by an automatic output filter; the September test pack checks them.
 - **Human in control, provably.** Juno has no way to start the analysis. The button ignores scripted clicks and accepts only a real person.
 - **Grounded, not guessed.** Recommendations cite excerpts from the product documents, and every quote on the life map and advice pack is checked against what was actually said.
 - **Executive-ready experience.** A polished interface, a customer-safe screen that hides internal scores, and an analytics dashboard designed for leadership.
@@ -262,13 +269,14 @@ The prototype is built from standard parts that scale by adding capacity, not by
 
 | Risk | Level | Mitigation |
 |---|---|---|
-| The AI says something non-compliant (a price, a guarantee, a suitability claim) | High impact | Layered guardrails already in place; scripted test pack and Compliance review before any pilot; Juno never starts analysis; every output reviewable |
-| Personal data and consent (PDPA) | High impact | Consent asked first; ID and card numbers removed; unfinished sessions deleted; privacy assessment and retention rules agreed with Data Privacy in July |
-| Names and accents are misheard, especially in mixed-language speech | Medium | Name hints, spelling checks by Juno, on-screen review and correction before analysis; native-speaker testing |
-| Juno hears itself on laptop speakers, so interruption is less reliable | Medium | Interruption turns on automatically with headphones; recommend headsets for customer-facing use |
+| The AI says something non-compliant (a price, a guarantee, a suitability claim) | Lower impact than before | Juno no longer speaks to customers, only to the advisor, and only asks and reads back; scripted test pack and Compliance review before any pilot; Juno never starts analysis; every output reviewable |
+| Personal data and consent (PDPA) | High impact | The advisor's notes still describe a customer: privacy assessment, retention rules and the advisor-side consent practice are agreed with Data Privacy in July. The earlier consent flow was for Juno speaking to customers and no longer applies |
+| Names and accents are misheard, especially in mixed-language speech | Medium | Name hints, on-screen review and correction before analysis, advisor confirms every fact; native-speaker testing |
+| Juno hears itself on laptop speakers, so interruption is less reliable | Medium | Interruption turns on automatically with headphones; recommend headsets for debriefs |
+| Advisors find Juno's questions slower than dictating | Medium | Questions capped at five, only about real gaps, always skippable; the pilot compares both modes on time and completeness |
 | Azure quota or availability limits at pilot load | Medium | Request quota early; automatic retries; fallback voice if speech is unavailable |
 | Advisors do not adopt it | Medium | Involve advisors from July; measure time saved with them; keep the advisor as decision-maker |
-| Non-English wording is not yet reviewed by native speakers | Low once reviewed | Planned review in September, including consent and disclosure lines |
+| Non-English wording is not yet reviewed by native speakers | Low once reviewed | Planned review in September |
 
 ### Assumptions and dependencies
 

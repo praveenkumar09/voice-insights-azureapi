@@ -54,7 +54,7 @@ public class CustomerController {
         CustomerProfile profile = existing.get();
 
         CustomerProfile fresh = new CustomerProfile();
-        boolean debrief = "DEBRIEF".equals(profile.getCaptureMode());
+        boolean debrief = "DEBRIEF".equals(profile.getCaptureMode()) || "JUNO_DEBRIEF".equals(profile.getCaptureMode());
         extractionService.extractInto(fresh, transcript, debrief);
         boolean extracted = fresh.getCustomerName() != null || fresh.getAge() != null || fresh.getOccupation() != null
                 || fresh.getIncomeBand() != null || fresh.getDependents() != null || fresh.getBudgetNotes() != null

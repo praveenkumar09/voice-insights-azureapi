@@ -776,7 +776,7 @@ public class RecommendationAgentService {
                     .append("; hopes: ").append(m.dreams().stream().map(CopilotInsights.Concern::label).toList())
                     .append("; concerns: ").append(m.worries().stream().map(CopilotInsights.Concern::label).toList());
         }
-        boolean debrief = "DEBRIEF".equals(profile.getCaptureMode());
+        boolean debrief = "DEBRIEF".equals(profile.getCaptureMode()) || "JUNO_DEBRIEF".equals(profile.getCaptureMode());
         String userMessage = "Customer profile:\n" + profileSummary(profile) + lifeMap
                 + (debrief ? "\nNOTE: the transcript below is the ADVISOR dictating a summary after the meeting, not the customer speaking." : "")
                 + "\nSituation analysis: " + merged.combinedNarrative()
