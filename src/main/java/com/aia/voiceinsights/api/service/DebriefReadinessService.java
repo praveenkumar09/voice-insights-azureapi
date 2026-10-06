@@ -70,6 +70,12 @@ public class DebriefReadinessService {
         put.accept("existingPolicies", "polic|insur|cover|\\bplan\\b|\\bnone\\b|no life");
     }
 
+    /** What a bare "No." means for fields where "no" is a real answer. */
+    private static final Map<String, String> NEGATIVE = Map.of(
+            "liabilities", "No loans or liabilities", "existingPolicies", "No existing insurance", "health", "No health conditions",
+            "familyHealthHistory", "No family health history", "smoker", "Non-smoker", "savings", "No savings",
+            "investments", "No investments", "property", "No property");
+
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
     private record Field(String key, String value, String quote) {}
     @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
@@ -135,7 +141,9 @@ public class DebriefReadinessService {
             }
             String text = notes.length() > 5000 ? notes.substring(notes.length() - 5000) : notes.toString();
             if (!text.isBlank()) {
-                Map<String, Fact> judged = judge(text);
+                StringBuilder advisor = new StringBuilder(dictation == null ? "" : dictation);
+                if (turns != null) for (JunoService.Turn t : turns) if (!"juno".equals(t.role()) && t.text() != null) advisor.append(' ').append(t.text());
+                Map<String, Fact> judged = judge(text, advisor.toString());
                 have.addAll(judged.keySet());
                 log.info("Debrief readiness: judged from the notes {}", judged.keySet());
             }
@@ -152,19 +160,26 @@ public class DebriefReadinessService {
     }
 
     /** The notes' fields the model established, each checked: its quote is really in the notes and reads like that kind of fact. */
-    private Map<String, Fact> judge(String text) throws Exception {
+    private Map<String, Fact> judge(String text, String advisorText) throws Exception {
         var r = chatModel.call(new Prompt(List.of(new SystemMessage(SYSTEM), new UserMessage("NOTES:\n" + text)),
                 AzureOpenAiChatOptions.builder().responseFormat(AzureOpenAiResponseFormat.JSON).temperature(0.0).maxTokens(700).build()));
         Llm llm = mapper.readValue(r.getResult().getOutput().getText(), Llm.class);
-        String hay = norm(text);
+        String hay = norm(advisorText); // evidence is the advisor's words only: never Juno's questions or read-back
         Map<String, Fact> out = new LinkedHashMap<>();
         if (llm.fields() != null) for (Field f : llm.fields()) {
             if (f == null || f.key() == null || !JUDGED.contains(f.key())) continue;
             if (f.value() == null || f.value().isBlank() || f.quote() == null || f.quote().isBlank()) continue;
-            if (!hay.contains(norm(f.quote()))) continue; // the quote must really be in the notes
+            if (!hay.contains(norm(f.quote()))) continue; // the quote must really be in the advisor's words
+            String value = f.value().strip();
+            String nv = norm(value);
+            if (nv.equals("yes") || nv.equals("yeah") || nv.equals("yep")) continue; // a bare "yes" says nothing without its question
+            if (nv.equals("no") || nv.equals("none") || nv.equals("nope") || nv.equals("nil")) {
+                value = NEGATIVE.get(f.key()); // a bare "No" becomes a statement that stands on its own
+                if (value == null) continue;
+            }
             var looks = LOOKS_LIKE.get(f.key());
-            if (looks != null && !looks.matcher(f.quote() + " " + f.value()).find()) continue; // and read like that kind of fact
-            out.putIfAbsent(f.key(), new Fact(f.key(), f.value().strip(), f.quote().strip()));
+            if (looks != null && !looks.matcher(f.quote() + " " + value).find()) continue; // and read like that kind of fact
+            out.putIfAbsent(f.key(), new Fact(f.key(), value, f.quote().strip()));
         }
         return out;
     }
@@ -180,16 +195,18 @@ public class DebriefReadinessService {
             int i = raw.indexOf("[Juno]");
             String dictation = i < 0 ? raw : raw.substring(0, i);
             StringBuilder notes = new StringBuilder(dictation.strip());
+            StringBuilder advisor = new StringBuilder(dictation);
             if (i >= 0) {
                 notes.append("\n\n");
                 var m = java.util.regex.Pattern.compile("\\[(Juno|Advisor)\\]\\s*(.*?)(?=\\[(?:Juno|Advisor)\\]|$)", java.util.regex.Pattern.DOTALL).matcher(raw.substring(i));
                 while (m.find()) {
                     String t = m.group(2).strip();
                     if (!t.isEmpty()) notes.append("Juno".equals(m.group(1)) ? "Juno: " : "Advisor: ").append(t).append('\n');
+                    if (!t.isEmpty() && !"Juno".equals(m.group(1))) advisor.append(' ').append(t);
                 }
             }
             String text = notes.length() > 6000 ? notes.substring(notes.length() - 6000) : notes.toString();
-            return judge(text);
+            return judge(text, advisor.toString());
         } catch (Exception e) {
             log.warn("DebriefReadinessService: could not read facts from the transcript: {}", e.toString());
             return Map.of();
