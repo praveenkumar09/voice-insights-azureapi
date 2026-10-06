@@ -331,7 +331,11 @@ public class AdvicePackService {
             for (Spec s : entry.getValue()) {
                 FactFindField f = field(s, p, drafted.get(s.key()), hay);
                 var j = fromJuno.get(s.key());
-                if ("missing".equals(f.source()) && j != null) f = new FactFindField(s.key(), s.label(), j.value(), "customer", j.quote());
+                if ("missing".equals(f.source()) && j != null) {
+                    // The pack shows the quote. A one-word answer ("No.") says nothing on its own, so it is shown with the statement it means.
+                    String shown = norm(j.quote()).length() < 6 ? j.value() + " (answered \u201C" + j.quote() + "\u201D)" : j.quote();
+                    f = new FactFindField(s.key(), s.label(), j.value(), "customer", shown);
+                }
                 fields.add(f);
             }
             out.add(new FactFindSection(entry.getKey(), fields));
