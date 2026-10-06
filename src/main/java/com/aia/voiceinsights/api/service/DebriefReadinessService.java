@@ -35,6 +35,9 @@ public class DebriefReadinessService {
 
     private static final Logger log = LoggerFactory.getLogger(DebriefReadinessService.class);
 
+    /** A fact-find field Juno's debrief established: the value, and the advisor's own words that support it. */
+    public record Fact(String key, String value, String quote) {}
+
     /** {@code baseline}: the count right after the dictation (before Juno's questions); null until known. */
     public record Readiness(int captured, int total, Integer baseline, List<String> missing) {
         public Readiness withBaseline(Integer b) { return new Readiness(captured, total, b, missing); }
@@ -96,6 +99,8 @@ public class DebriefReadinessService {
             self-employed / business owner), incomeStability, monthlyExpenses, savings, investments, property, liabilities (loans,
             mortgage), retirementSavings (CPF etc.), retirementAge, educationGoal, health, familyHealthHistory, riskAppetite,
             existingPolicies.
+            The value must stand on its own without the question: for a "no" or "none" answer say what is none ("No loans or
+            liabilities", "Does not smoke", "No existing insurance"), never just "No" or "None".
             Respond with ONLY JSON: {"fields":[{"key":string,"value":string,"quote":string}]}
             """;
 
@@ -130,21 +135,9 @@ public class DebriefReadinessService {
             }
             String text = notes.length() > 5000 ? notes.substring(notes.length() - 5000) : notes.toString();
             if (!text.isBlank()) {
-                var r = chatModel.call(new Prompt(List.of(new SystemMessage(SYSTEM), new UserMessage("NOTES:\n" + text)),
-                        AzureOpenAiChatOptions.builder().responseFormat(AzureOpenAiResponseFormat.JSON).temperature(0.0).maxTokens(700).build()));
-                Llm llm = mapper.readValue(r.getResult().getOutput().getText(), Llm.class);
-                String hay = norm(text);
-                Set<String> judged = new LinkedHashSet<>();
-                if (llm.fields() != null) for (Field f : llm.fields()) {
-                    if (f == null || f.key() == null || !JUDGED.contains(f.key())) continue;
-                    if (f.value() == null || f.value().isBlank() || f.quote() == null || f.quote().isBlank()) continue;
-                    if (!hay.contains(norm(f.quote()))) continue; // the quote must really be in the notes
-                    var looks = LOOKS_LIKE.get(f.key());
-                    if (looks != null && !looks.matcher(f.quote() + " " + f.value()).find()) continue; // and read like that kind of fact
-                    judged.add(f.key());
-                }
-                have.addAll(judged);
-                log.info("Debrief readiness: judged from the notes {}", judged);
+                Map<String, Fact> judged = judge(text);
+                have.addAll(judged.keySet());
+                log.info("Debrief readiness: judged from the notes {}", judged.keySet());
             }
             Map<String, String> labels = new LinkedHashMap<>();
             AdvicePackService.factFindFields().forEach(f -> labels.put(f[0], f[1]));
@@ -155,6 +148,51 @@ public class DebriefReadinessService {
         } catch (Exception e) {
             log.warn("DebriefReadinessService: could not assess: {}", e.toString());
             return null;
+        }
+    }
+
+    /** The notes' fields the model established, each checked: its quote is really in the notes and reads like that kind of fact. */
+    private Map<String, Fact> judge(String text) throws Exception {
+        var r = chatModel.call(new Prompt(List.of(new SystemMessage(SYSTEM), new UserMessage("NOTES:\n" + text)),
+                AzureOpenAiChatOptions.builder().responseFormat(AzureOpenAiResponseFormat.JSON).temperature(0.0).maxTokens(700).build()));
+        Llm llm = mapper.readValue(r.getResult().getOutput().getText(), Llm.class);
+        String hay = norm(text);
+        Map<String, Fact> out = new LinkedHashMap<>();
+        if (llm.fields() != null) for (Field f : llm.fields()) {
+            if (f == null || f.key() == null || !JUDGED.contains(f.key())) continue;
+            if (f.value() == null || f.value().isBlank() || f.quote() == null || f.quote().isBlank()) continue;
+            if (!hay.contains(norm(f.quote()))) continue; // the quote must really be in the notes
+            var looks = LOOKS_LIKE.get(f.key());
+            if (looks != null && !looks.matcher(f.quote() + " " + f.value()).find()) continue; // and read like that kind of fact
+            out.putIfAbsent(f.key(), new Fact(f.key(), f.value().strip(), f.quote().strip()));
+        }
+        return out;
+    }
+
+    /**
+     * The facts a stored Juno-debrief transcript ("dictation, then [Juno] question / [Advisor] answer lines") establishes. The advice pack
+     * uses these for fields its own extraction left blank, so a question Juno asked and the advisor answered always reaches the pack,
+     * even when the answer is a single word that the pack's own word-for-word quote rule would reject.
+     */
+    public Map<String, Fact> factsFromTranscript(String raw) {
+        try {
+            if (raw == null || raw.isBlank()) return Map.of();
+            int i = raw.indexOf("[Juno]");
+            String dictation = i < 0 ? raw : raw.substring(0, i);
+            StringBuilder notes = new StringBuilder(dictation.strip());
+            if (i >= 0) {
+                notes.append("\n\n");
+                var m = java.util.regex.Pattern.compile("\\[(Juno|Advisor)\\]\\s*(.*?)(?=\\[(?:Juno|Advisor)\\]|$)", java.util.regex.Pattern.DOTALL).matcher(raw.substring(i));
+                while (m.find()) {
+                    String t = m.group(2).strip();
+                    if (!t.isEmpty()) notes.append("Juno".equals(m.group(1)) ? "Juno: " : "Advisor: ").append(t).append('\n');
+                }
+            }
+            String text = notes.length() > 6000 ? notes.substring(notes.length() - 6000) : notes.toString();
+            return judge(text);
+        } catch (Exception e) {
+            log.warn("DebriefReadinessService: could not read facts from the transcript: {}", e.toString());
+            return Map.of();
         }
     }
 

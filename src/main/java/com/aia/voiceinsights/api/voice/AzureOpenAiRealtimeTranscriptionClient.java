@@ -202,7 +202,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
 
     public void setConversational(boolean on) {
         cutGapMs = on ? 550 : GAP_MS;
-        minSpeechMs = on ? 400 : MIN_SPEECH_MS;
+        minSpeechMs = on ? 250 : MIN_SPEECH_MS; // a one-word "No." is about a quarter of a second of speech
     }
 
     private double noiseFloor = 150;

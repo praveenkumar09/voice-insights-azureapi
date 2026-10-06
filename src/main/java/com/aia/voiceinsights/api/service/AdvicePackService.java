@@ -47,11 +47,13 @@ public class AdvicePackService {
     private final CustomerProfileStore profileStore;
     private final RecommendationAgentService agents;
     private final AdvicePackStore packStore;
+    private final DebriefReadinessService debriefReadiness;
     private final ExecutorService executor = Executors.newFixedThreadPool(8);
     private final Set<String> generating = ConcurrentHashMap.newKeySet();
 
     public AdvicePackService(RecommendationStore runStore, CustomerProfileStore profileStore,
-                             RecommendationAgentService agents, AdvicePackStore packStore) {
+                             RecommendationAgentService agents, AdvicePackStore packStore, DebriefReadinessService debriefReadiness) {
+        this.debriefReadiness = debriefReadiness;
         this.runStore = runStore;
         this.profileStore = profileStore;
         this.agents = agents;
@@ -306,20 +308,41 @@ public class AdvicePackService {
 
     private List<FactFindSection> factFind(Inputs in) {
         CustomerProfile p = in.profile();
-        String hay = norm(in.transcript());
+        // In a Juno debrief the transcript also holds Juno's own lines (its questions and its read-back, an AI's paraphrase). Those are
+        // never evidence of what the customer is like, so only the advisor's words go to the fact-find extraction. Short answers that need
+        // Juno's question for context are mapped from Juno's own checked facts below.
+        String evidence = "JUNO_DEBRIEF".equals(p.getCaptureMode()) ? advisorWordsOnly(in.transcript()) : in.transcript();
+        String hay = norm(evidence);
         Map<String, DraftField> drafted = new LinkedHashMap<>();
-        if (!in.transcript().isBlank()) {
-            FactFindDraft d = agents.callJson(FACT_FIND_PROMPT, "Transcript:\n" + in.transcript(), FactFindDraft.class);
+        if (!evidence.isBlank()) {
+            FactFindDraft d = agents.callJson(FACT_FIND_PROMPT, "Transcript:\n" + evidence, FactFindDraft.class);
             for (DraftField f : safe(d.fields())) if (f != null && f.key() != null) drafted.put(f.key(), f);
         }
+
+        // A Juno debrief only: what Juno asked and the advisor answered. The extraction above wants a word-for-word quote of at least six
+        // characters, which "No." / "None." (the usual answer to "any loans?") can never satisfy, so those answers are mapped from Juno's own
+        // checked facts. Other capture modes do not take this path.
+        Map<String, DebriefReadinessService.Fact> fromJuno = "JUNO_DEBRIEF".equals(p.getCaptureMode())
+                ? debriefReadiness.factsFromTranscript(in.transcript()) : Map.of();
 
         List<FactFindSection> out = new ArrayList<>();
         for (var entry : FACT_FIND.entrySet()) {
             List<FactFindField> fields = new ArrayList<>();
-            for (Spec s : entry.getValue()) fields.add(field(s, p, drafted.get(s.key()), hay));
+            for (Spec s : entry.getValue()) {
+                FactFindField f = field(s, p, drafted.get(s.key()), hay);
+                var j = fromJuno.get(s.key());
+                if ("missing".equals(f.source()) && j != null) f = new FactFindField(s.key(), s.label(), j.value(), "customer", j.quote());
+                fields.add(f);
+            }
             out.add(new FactFindSection(entry.getKey(), fields));
         }
         return out;
+    }
+
+    /** The transcript of a Juno debrief without Juno's lines: the dictation and the advisor's answers only. */
+    static String advisorWordsOnly(String raw) {
+        if (raw == null) return "";
+        return raw.replaceAll("(?s)\\[Juno\\].*?(?=\\[Advisor\\]|$)", " ").replace("[Advisor]", " ").replaceAll("\\s+", " ").strip();
     }
 
     private FactFindField field(Spec s, CustomerProfile p, DraftField d, String hay) {

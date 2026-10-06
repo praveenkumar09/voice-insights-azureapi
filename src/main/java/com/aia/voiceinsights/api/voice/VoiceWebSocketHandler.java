@@ -275,6 +275,16 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             if (!said.isEmpty() && vs.transcriptionClient != null) vs.transcriptionClient.updatePrompt(promptFor(vs, nameContext(vs, said)));
             return;
         }
+        // "advisor_say": the advisor tapped an answer (Yes / No / Not discussed) instead of speaking it. A one-word spoken answer is easily
+        // lost as background noise, so the tap is filed in the transcript exactly where the spoken answer would have been.
+        if ("advisor_say".equals(node.path("type").asText("")) && "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode())) {
+            String said = node.path("text").asText("").strip();
+            if (!said.isEmpty() && said.length() < 200) {
+                vs.transcript.append(said).append(" ");
+                extractionExecutor.submit(() -> reExtractAndPush(wsSession, vs));
+            }
+            return;
+        }
         if ("stop".equals(node.path("type").asText(""))) {
             // Safety flush: server_vad auto-commits at real pauses, but if the
             // agent stops mid-utterance (no pause yet when they hit stop),

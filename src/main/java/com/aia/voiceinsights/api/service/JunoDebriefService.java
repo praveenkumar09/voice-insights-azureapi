@@ -140,7 +140,8 @@ public class JunoDebriefService {
     private static final String WRAP_UP = """
             THIS TURN: wrap up now (done = true). In "say": thank the advisor briefly, then give a read-back in two or three
             short sentences of the most important things you now have about the customer and the meeting (include any
-            follow-up agreed), then say how many of the 26 fact-find fields are now captured (and how many were captured after the dictation,
+            follow-up agreed). State a "No" answer as a fact ("he has no loans"), never as "not mentioned"; say "not discussed"
+            only for something the advisor said was not discussed. Then say how many of the 26 fact-find fields are now captured (and how many were captured after the dictation,
             both given as FACT-FIND NOW) and name the one or two biggest gaps left for next time, then say a draft follow-up
             message for the customer is ready on screen and ask them to check the review below. Up to 80 words. Do not ask a question.
             """;
