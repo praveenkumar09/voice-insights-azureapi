@@ -216,7 +216,7 @@ The current filter is **relative**: it learns how loud *this* speaker normally i
 
 **File:** `voice/AzureOpenAiRealtimeTranscriptionClient.java`
 
-We use Azure OpenAI's **realtime transcription** over a second WebSocket (server → Azure). Two important lessons shaped this class:
+We use Azure OpenAI's **realtime transcription** over a second WebSocket (server → Azure) using the **GA endpoint** (`/openai/v1/realtime?intent=transcription`, configured with a `session.update` of type `transcription`; the older `api-version=…-preview` / `transcription_session.update` API was retired and Azure now closes it with `realtime_beta_access_required`). Two important lessons shaped this class:
 
 1. **We don't use Azure's own pause detection.** In testing it rarely found pauses in continuous speech, so text appeared late or never. Instead our own **energy-based chunker** decides where to cut:
    - it tracks the room's noise floor;

@@ -126,8 +126,24 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     private static final java.util.regex.Pattern GREETING_ONLY = java.util.regex.Pattern.compile(
             "^(?:\\W*\\b(?:hi|hello|hey|hola|bye|goodbye|thanks?|thank|you|the|a|an)\\b)+\\W*$", java.util.regex.Pattern.CASE_INSENSITIVE);
 
-    /** Any letter that is not Latin script. */
-    private static final java.util.regex.Pattern OTHER_SCRIPT = java.util.regex.Pattern.compile("[\\p{L}&&[^\\p{IsLatin}]]");
+    /** Any letter that is neither Latin nor Chinese (Han): Tamil, Arabic, Cyrillic... Advisors mix English with Mandarin, so Han is allowed. */
+    private static final java.util.regex.Pattern OTHER_SCRIPT = java.util.regex.Pattern.compile("[\\p{L}&&[^\\p{IsLatin}\\p{IsHan}]]");
+
+    /** A Chinese-only line this short ("谢谢观看") is a noise hallucination, not Mandarin mixed into a debrief. */
+    private static final int MIN_HAN_ONLY_CHARS = 6;
+
+    /** A line was thrown away: the partial text built up for it must not stay on screen or lead the next line. */
+    private void clearPartial(WebSocketSession wsSession, VoiceSession vs) {
+        vs.partial.setLength(0);
+        sendJsonQuiet(wsSession, Map.of("type", "partial_transcript", "text", ""));
+    }
+
+    private static boolean isStrayNonEnglish(String text) {
+        if (OTHER_SCRIPT.matcher(text).find()) return true;
+        long han = text.codePoints().filter(c -> Character.UnicodeScript.of(c) == Character.UnicodeScript.HAN).count();
+        boolean hasLatin = text.codePoints().anyMatch(c -> Character.UnicodeScript.of(c) == Character.UnicodeScript.LATIN);
+        return han > 0 && !hasLatin && han < MIN_HAN_ONLY_CHARS;
+    }
 
     /** The context prompt plus the name hint list — the model spells a name correctly far more often when it has seen it. */
     private String transcriptionPrompt() {
@@ -168,6 +184,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                 new AzureOpenAiRealtimeTranscriptionClient.Listener() {
                     @Override
                     public void onPartialTranscript(String text) {
+                        text = ChineseScript.toSimplified(text);
                         // Azure sends small increments; the browser shows whatever it is sent, so send the running text.
                         String running = vs.partial.toString();
                         if (!running.isEmpty() && text.startsWith(running)) vs.partial.setLength(0); // already cumulative
@@ -176,16 +193,23 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                     }
 
                     @Override
+                    public void onDiscardedTranscript() {
+                        clearPartial(wsSession, vs);
+                    }
+
+                    @Override
                     public void onFinalTranscript(String raw) {
-                        String text = redact(raw); // ID and card numbers are never stored or shown
+                        String text = redact(ChineseScript.toSimplified(raw)); // ID and card numbers are never stored or shown
                         // A debrief with Juno in English: a line in another script (Tamil, Chinese...) is the speech model
                         // inventing words from background noise, not the advisor. It is dropped before anything reads it.
                         if ("JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()) && "en".equals(vs.lang) && GREETING_ONLY.matcher(text).matches()) {
                             System.out.println("[voice-stt] dropped a stray greeting in a debrief");
+                            clearPartial(wsSession, vs);
                             return;
                         }
-                        if ("JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()) && "en".equals(vs.lang) && OTHER_SCRIPT.matcher(text).find()) {
+                        if ("JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()) && "en".equals(vs.lang) && isStrayNonEnglish(text)) {
                             System.out.println("[voice-stt] dropped a stray non-English line in an English debrief");
+                            clearPartial(wsSession, vs);
                             return;
                         }
                         vs.reconnectAttempts = 0; // a real transcript flowed — the connection is healthy again

@@ -38,6 +38,16 @@ public class ProfileExtractionService {
             English (translate goals, occupation and so on). Personal names must be written in Latin letters: if a name is said in Chinese, Tamil or another script, write it romanised (for example pinyin), never in the original script. If the customer spells their name letter by letter
             (for example "C-H-E-N"), the spelled letters are the correct spelling of that name — use them
             instead of any earlier guess.
+            The profile describes ONE person: the main customer (the person being advised, e.g. the one named "Mr Lim").
+            Facts about anyone else (spouse, wife, husband, children, parents, friends) must NEVER go into customerName,
+            age, occupation, incomeBand or existingPolicies. For example, "his wife is a housewife" or "she is 38" is about the
+            wife, so the customer's occupation and age stay null unless stated about the customer himself or herself. Count
+            such people in "dependents" where they depend on the customer, and record their details (spouse's job, age,
+            cover) in "notes" instead, saying whose they are. A pronoun like "she" or "他太太" refers to the person last
+            named: check who it refers to before assigning a fact. Pronoun gender matters: if the customer is "Mr", "he"
+            or "他", then a fact about "she", "her" or "她" is about someone else (usually the wife), and the reverse for a
+            female customer. Speech recognition often turns "太太是" into "她是/她还是", so treat "她..." about a male customer
+            as the spouse.
 
             Respond with ONLY a JSON object, no markdown fences, no commentary:
             {

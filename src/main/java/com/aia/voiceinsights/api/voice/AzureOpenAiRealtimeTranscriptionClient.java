@@ -26,9 +26,9 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * to {@link Listener}.
  *
  * Protocol (Azure OpenAI Realtime API, {@code intent=transcription}; URL like
- * wss://{resource}.openai.azure.com/openai/realtime?api-version=...&intent=transcription,
+ * wss://{resource}.openai.azure.com/openai/v1/realtime?intent=transcription,
  * authenticated with an {@code api-key} header rather than OpenAI's Bearer token):
- *   client -> server: {"type":"transcription_session.update","session":{...}}
+ *   client -> server: {"type":"session.update","session":{"type":"transcription",...}}
  *                     once on open, then {"type":"input_audio_buffer.append","audio":"<base64 pcm16>"}
  *                     per chunk, and {"type":"input_audio_buffer.commit"} to end a turn.
  *   server -> client: "conversation.item.input_audio_transcription.delta" (partial),
@@ -42,6 +42,8 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         void onFinalTranscript(String text);
         void onError(String message);
         void onClose();
+        /** A transcript was thrown away as invented (the model heard noise, not speech): clear any partial text already shown for it. */
+        default void onDiscardedTranscript() {}
         /** The transcription service has confirmed the session — audio sent from now on is certain to be heard. */
         default void onReady() {}
     }
@@ -114,8 +116,8 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     }
 
     /**
-     * Azure transcription-session shape: {@code transcription_session.update}
-     * with pcm16 input (24kHz mono) and the gpt-4o-transcribe deployment.
+     * Azure GA transcription-session shape: {@code session.update} with {@code type=transcription}
+     * and 24kHz pcm16 input (24kHz mono) and the gpt-4o-transcribe deployment.
      *
      * turn_detection is server_vad, not null: with it null, the service only
      * finalizes a transcript on an explicit input_audio_buffer.commit, so any
@@ -130,14 +132,20 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         transcription.put("model", transcriptionModel);
         if (prompt != null && !prompt.isBlank()) transcription.put("prompt", prompt);
 
+        // GA shape (the preview transcription_session.update API was retired): audio.input.{format, transcription,
+        // noise_reduction, turn_detection}. No Azure VAD: continuous speech (or an echoey room) never gives it a
+        // pause to cut on, so segments are cut by the energy-based chunker below instead.
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("format", Map.of("type", "audio/pcm", "rate", 24000));
+        input.put("transcription", transcription);
+        input.put("noise_reduction", Map.of("type", "near_field"));
+        input.put("turn_detection", null);
+
         Map<String, Object> session = new LinkedHashMap<>();
-        session.put("input_audio_format", "pcm16");
-        session.put("input_audio_transcription", transcription);
-        // No Azure VAD: continuous speech (or an echoey room) never gives it a pause to cut on, so nothing would
-        // appear until the speaker stopped. Segments are cut by the energy-based chunker below instead.
-        session.put("turn_detection", null);
-        session.put("input_audio_noise_reduction", Map.of("type", "near_field"));
-        send(Map.of("type", "transcription_session.update", "session", session));
+        session.put("type", "transcription");
+        session.put("include", List.of("item.input_audio_transcription.logprobs")); // how sure the model was of each word
+        session.put("audio", Map.of("input", input));
+        send(Map.of("type", "session.update", "session", session));
     }
 
     /** {@code pcm16}: raw 24kHz, 16-bit mono PCM samples (see voice-insights-ui's useVoiceCapture hook). */
@@ -315,9 +323,16 @@ public class AzureOpenAiRealtimeTranscriptionClient {
                     synchronized (this) { byItem.remove(root.path("item_id").asText("")); }
                     String transcript = root.path("transcript").asText("");
                     System.out.println("[voice-stt] completed (" + transcript.length() + " chars)");
-                    if (!transcript.isBlank()) listener.onFinalTranscript(transcript);
+                    if (transcript.isBlank()) return;
+                    double confidence = meanLogprob(root.path("logprobs"));
+                    if (isInvented(transcript, confidence)) {
+                        System.out.println("[voice-stt] discarded an invented line (confidence " + String.format("%.2f", confidence) + "): " + transcript);
+                        listener.onDiscardedTranscript();
+                        return;
+                    }
+                    listener.onFinalTranscript(transcript);
                 }
-                case "transcription_session.updated" -> listener.onReady();
+                case "session.updated" -> listener.onReady();
                 case "error" -> {
                     // A forced commit can race with the VAD's own commit; an empty buffer is harmless, not an error.
                     if ("input_audio_buffer_commit_empty".equals(root.path("error").path("code").asText(""))) return;
@@ -328,6 +343,46 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         } catch (Exception e) {
             listener.onError("Failed to parse Azure OpenAI realtime event: " + e.getMessage());
         }
+    }
+
+    // ── Telling speech from invented text. Given room noise or a sliver of sound, the speech model writes a fluent
+    //    sentence of its own ("Okay, so what kind of illnesses are we talking about?"). It is not sure of those words:
+    //    measured against the real model, invented lines average a log-probability of -1.2 to -5.7 per word, while real
+    //    speech (quiet, noisy, accented, Mandarin mixed in, one-word answers) never averaged below -0.6. -1.0 sits
+    //    between with room on both sides. One more case is no less confident but still not speech: the model reading
+    //    its own prompt back ("CPF, MediSave, critical illness, term life, premium, dependents."). ─────────────────────
+
+    /** An average word log-probability below this means the model was guessing. */
+    private static final double MIN_MEAN_LOGPROB = -1.0;
+    /** A line made only of words from the prompt is read back from it unless the model was sure of every word. */
+    private static final double MIN_MEAN_LOGPROB_FOR_PROMPT_WORDS = -0.15;
+    private static final int MIN_WORDS_FOR_ECHO = 3;
+
+    /** Mean log-probability of the tokens, or 0 (fully sure, so the line is kept) if the service sent none. */
+    static double meanLogprob(JsonNode logprobs) {
+        if (logprobs == null || !logprobs.isArray() || logprobs.isEmpty()) return 0;
+        double sum = 0;
+        int n = 0;
+        for (JsonNode t : logprobs) {
+            if (t.has("logprob")) { sum += t.path("logprob").asDouble(0); n++; }
+        }
+        return n == 0 ? 0 : sum / n;
+    }
+
+    private static List<String> words(String text) {
+        List<String> out = new ArrayList<>();
+        for (String w : text.toLowerCase(java.util.Locale.ROOT).split("[^\\p{L}\\p{N}]+")) if (!w.isEmpty()) out.add(w);
+        return out;
+    }
+
+    private boolean isInvented(String transcript, double meanLogprob) {
+        if (meanLogprob < MIN_MEAN_LOGPROB) return true;
+        String p = prompt;
+        if (p == null || p.isBlank() || meanLogprob >= MIN_MEAN_LOGPROB_FOR_PROMPT_WORDS) return false;
+        List<String> said = words(transcript);
+        if (said.size() < MIN_WORDS_FOR_ECHO) return false;
+        java.util.Set<String> inPrompt = new java.util.HashSet<>(words(p));
+        return inPrompt.containsAll(said);
     }
 
     private class RealtimeListener implements WebSocket.Listener {
@@ -350,6 +405,10 @@ public class AzureOpenAiRealtimeTranscriptionClient {
 
         @Override
         public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
+            if (statusCode != WebSocket.NORMAL_CLOSURE) {
+                System.err.println("[voice-stt] Azure closed the realtime socket: " + statusCode + " " + reason);
+                listener.onError("Azure closed the transcription connection: " + reason);
+            }
             listener.onClose();
             return null;
         }
