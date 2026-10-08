@@ -61,12 +61,14 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     private volatile WebSocket webSocket;
     private volatile boolean connected;
 
-    // The browser starts streaming audio as soon as ITS websocket to us opens,
-    // which can beat our own async handshake to Azure OpenAI — any chunk that
-    // arrives before `webSocket` is set here was previously just dropped
-    // (send()'s null check), silently clipping the start of the very first
-    // utterance of a session. Queue instead, flush in order once connected.
-    private final Queue<byte[]> pendingAudio = new ConcurrentLinkedQueue<>();
+    // The browser starts streaming audio as soon as ITS websocket to us opens, which can beat our own async handshake
+    // to Azure OpenAI. The segmenter takes every chunk regardless, so nothing at the start of a session is lost or
+    // left out of its pause analysis; segments that are cut before Azure is connected wait here, in order.
+    private record Outgoing(List<byte[]> pieces, boolean overlap) {}
+    private final List<Outgoing> outbox = new ArrayList<>();
+
+    /** Holds the audio and decides where to cut it into segments (see SpeechSegmenter). */
+    private final SpeechSegmenter segmenter = new SpeechSegmenter();
 
     /**
      * {@code prompt}: free-text context to bias transcription vocabulary (see
@@ -100,17 +102,12 @@ public class AzureOpenAiRealtimeTranscriptionClient {
                 .header("api-key", apiKey)
                 .buildAsync(URI.create(apiUrl), new RealtimeListener())
                 .thenAccept(ws -> {
-                    // Flush what arrived while connecting BEFORE live audio can overtake it: sendAudioChunk
-                    // queues until `connected` flips, and `connected` only flips once the backlog is drained.
-                    this.webSocket = ws;
-                    sendSessionUpdate();
-                    byte[] queued;
-                    while ((queued = pendingAudio.poll()) != null) {
-                        sendNow(queued);
-                    }
-                    this.connected = true;
-                    while ((queued = pendingAudio.poll()) != null) { // anything that slipped in during the drain
-                        sendNow(queued);
+                    synchronized (this) {
+                        this.webSocket = ws;
+                        sendSessionUpdate();
+                        for (Outgoing queued : outbox) sendSegment(queued.pieces(), 0, queued.overlap()); // cut before we were connected, oldest first
+                        outbox.clear();
+                        this.connected = true;
                     }
                 });
     }
@@ -150,13 +147,9 @@ public class AzureOpenAiRealtimeTranscriptionClient {
 
     /** {@code pcm16}: raw 24kHz, 16-bit mono PCM samples (see voice-insights-ui's useVoiceCapture hook). */
     public synchronized void sendAudioChunk(byte[] pcm16) {
-        if (!connected) {
-            pendingAudio.add(pcm16);
-            return;
-        }
-        sendNow(pcm16);
-        segment.add(pcm16);
-        if (shouldCut(pcm16)) commit();
+        receivedMs += pcm16.length / 48; // 24kHz x 2 bytes = 48 bytes per millisecond
+        for (SpeechSegmenter.Segment seg : segmenter.feed(pcm16)) transmit(seg, "cut");
+        logNotes();
     }
 
     // ── Segments awaiting a transcript. Azure occasionally reports "Input transcription failed" for an item; the
@@ -167,8 +160,9 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     private static final class Pending {
         final List<byte[]> audio;
         final int attempts;
+        final boolean overlap; // starts with audio already sent in the previous segment
         String itemId;
-        Pending(List<byte[]> audio, int attempts) { this.audio = audio; this.attempts = attempts; }
+        Pending(List<byte[]> audio, int attempts, boolean overlap) { this.audio = audio; this.attempts = attempts; this.overlap = overlap; }
     }
 
     /** Audio appended since the last commit — the segment being spoken right now. */
@@ -184,83 +178,77 @@ public class AzureOpenAiRealtimeTranscriptionClient {
             return;
         }
         System.out.println("[voice-stt] retrying a failed segment (attempt " + (failed.attempts + 1) + ")");
-        send(Map.of("type", "input_audio_buffer.clear")); // drops the audio of whatever is being spoken now…
-        for (byte[] c : failed.audio) sendNow(c);
-        awaitingId.addLast(new Pending(failed.audio, failed.attempts + 1));
-        send(Map.of("type", "input_audio_buffer.commit"));
-        for (byte[] c : segment) sendNow(c); // …which is put straight back after the retried segment
+        sendSegment(failed.audio, failed.attempts + 1, failed.overlap); // Azure's buffer is empty between segments, so it can simply be sent again
     }
 
-    // ── Chunking: cut a segment at the first short quiet gap once it is long enough, or at a hard cap ──────────
+    // ── Chunking lives in SpeechSegmenter: it holds the audio, finds pauses relative to the speaker, cuts in the middle
+    //    of a pause (or at the quietest moment of a long run) and hands over whole segments. Each one is sent to Azure
+    //    here in one go — appended, then committed — so Azure's buffer is never half-full. ───────────────────────────
 
-    private static final int FRAME_SAMPLES = 480;     // 20 ms at 24 kHz
-    private static final int MIN_SPEECH_MS = 700;     // below this a segment is just noise (a leaked sliver of background) — cleared, never transcribed
-    private static final int MIN_TURN_MS = 2000;      // do not cut sooner than this
-    private static final int GAP_MS = 150;            // a quiet gap this long counts as a pause
-    private static final int MAX_TURN_MS = 9000;      // cut here even without a pause
-    private static final int IDLE_CLEAR_MS = 10000;   // drop a buffer that held only silence
-
-    /**
-     * Conversation with Juno: the browser ends each answer itself (a commit after the speaker goes quiet), so the
-     * server must not slice answers at tiny gaps between words — that is how a short tail such as a surname was cut
-     * off and then discarded as noise. A larger pause is needed to cut, and a shorter tail still counts as speech.
-     */
-    private volatile int cutGapMs = GAP_MS;
-    private volatile int minSpeechMs = MIN_SPEECH_MS;
+    /** Audio received from the browser so far, in ms — the clock the diagnostic log lines are timed on. */
+    private long receivedMs;
 
     public void setConversational(boolean on) {
-        cutGapMs = on ? 550 : GAP_MS;
-        minSpeechMs = on ? 250 : MIN_SPEECH_MS; // a one-word "No." is about a quarter of a second of speech
+        segmenter.setConversational(on);
     }
 
-    private double noiseFloor = 150;
-    private int turnMs, speechMs, gapMs;
+    /** One person talking (an advisor dictating): sounds that stand alone, or are far quieter than they have been, are not them. */
+    public void setSingleSpeaker(boolean on) {
+        segmenter.setSingleSpeaker(on);
+    }
 
-    private synchronized boolean shouldCut(byte[] pcm) {
-        int samples = pcm.length / 2;
-        for (int off = 0; off < samples; off += FRAME_SAMPLES) {
-            int len = Math.min(FRAME_SAMPLES, samples - off);
-            double sum = 0;
-            for (int i = 0; i < len; i++) {
-                short v = (short) ((pcm[2 * (off + i)] & 0xff) | (pcm[2 * (off + i) + 1] << 8));
-                sum += (double) v * v;
-            }
-            double rms = Math.sqrt(sum / len);
-            int ms = len * 1000 / 24000;
-            // Room-noise level: follows quiet moments quickly, creeps upward very slowly, never beyond 600.
-            noiseFloor = rms < noiseFloor ? noiseFloor + 0.3 * (rms - noiseFloor) : Math.min(600, noiseFloor + 0.0005 * (rms - noiseFloor));
-            boolean quiet = rms < Math.max(120, noiseFloor * 2.5);
-            turnMs += ms;
-            if (quiet) gapMs += ms; else { speechMs += ms; gapMs = 0; }
+    private void logNotes() {
+        for (String n : segmenter.drainNotes()) System.out.println("[voice-stt] " + n + " @" + receivedMs + "ms");
+    }
+
+    private void transmit(SpeechSegmenter.Segment seg, String why) {
+        System.out.println("[voice-stt] " + why + ": " + seg.startMs() + "-" + seg.endMs() + "ms (" + seg.speechMs() + "ms speech) @" + receivedMs + "ms");
+        List<byte[]> pieces = new ArrayList<>();
+        byte[] audio = seg.audio();
+        for (int off = 0; off < audio.length; off += 48000) { // 1 s per append
+            pieces.add(java.util.Arrays.copyOfRange(audio, off, Math.min(audio.length, off + 48000)));
         }
-        boolean cut = speechMs >= minSpeechMs && ((gapMs >= cutGapMs && turnMs >= MIN_TURN_MS) || turnMs >= MAX_TURN_MS);
-        if (!cut && speechMs < minSpeechMs && turnMs >= IDLE_CLEAR_MS) {
-            send(Map.of("type", "input_audio_buffer.clear"));
-            segment.clear();
-            turnMs = speechMs = gapMs = 0;
-        }
-        return cut;
+        if (!connected) outbox.add(new Outgoing(pieces, seg.overlap()));
+        else sendSegment(pieces, 0, seg.overlap());
     }
 
-    private void sendNow(byte[] pcm16) {
-        send(Map.of("type", "input_audio_buffer.append", "audio", Base64.getEncoder().encodeToString(pcm16)));
+    private void sendSegment(List<byte[]> pieces, int attempts, boolean overlap) {
+        awaitingId.addLast(new Pending(pieces, attempts, overlap));
+        for (byte[] p : pieces) send(Map.of("type", "input_audio_buffer.append", "audio", Base64.getEncoder().encodeToString(p)));
+        send(Map.of("type", "input_audio_buffer.commit"));
     }
 
+    /**
+     * The speaker paused or finished: everything the segmenter still holds goes out as one last segment (with a little
+     * silence after it so the final word is not clipped), or is dropped when it holds no real speech.
+     */
     public synchronized void commit() {
-        // Committing a few hundred milliseconds of room noise makes the model invent a sentence (it expects insurance
-        // talk). Stop and pause also call this, so anything without real speech in it is discarded instead.
-        if (speechMs < minSpeechMs) {
-            if (turnMs > 0) System.out.println("[voice-stt] discarded " + turnMs + "ms (" + speechMs + "ms speech) — too little to transcribe");
-            send(Map.of("type", "input_audio_buffer.clear"));
-            segment.clear();
-            turnMs = speechMs = gapMs = 0;
+        SpeechSegmenter.Segment seg = segmenter.flush();
+        logNotes();
+        if (seg == null) {
+            System.out.println("[voice-stt] flush: nothing worth sending @" + receivedMs + "ms");
             return;
         }
-        System.out.println("[voice-stt] cut: " + turnMs + "ms (" + speechMs + "ms speech)");
-        turnMs = speechMs = gapMs = 0;
-        awaitingId.addLast(new Pending(new ArrayList<>(segment), 0));
-        segment.clear();
-        send(Map.of("type", "input_audio_buffer.commit"));
+        transmit(seg, "flush");
+    }
+
+    /**
+     * Waits until every segment sent so far has come back as a transcript (or {@code timeoutMs} passes). A fixed short wait
+     * after Finish lost the last sentence whenever its transcript took longer than the wait.
+     */
+    public void awaitIdle(long timeoutMs) {
+        long end = System.currentTimeMillis() + timeoutMs;
+        try {
+            while (System.currentTimeMillis() < end) {
+                synchronized (this) {
+                    if (awaitingId.isEmpty() && byItem.isEmpty() && outbox.isEmpty()) return;
+                }
+                Thread.sleep(50);
+            }
+            System.err.println("[voice-stt] gave up waiting for the last transcript after " + timeoutMs + "ms");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     public void close() {
@@ -320,7 +308,8 @@ public class AzureOpenAiRealtimeTranscriptionClient {
                     retry(failed);
                 }
                 case "conversation.item.input_audio_transcription.completed" -> {
-                    synchronized (this) { byItem.remove(root.path("item_id").asText("")); }
+                    Pending done;
+                    synchronized (this) { done = byItem.remove(root.path("item_id").asText("")); }
                     String transcript = root.path("transcript").asText("");
                     System.out.println("[voice-stt] completed (" + transcript.length() + " chars)");
                     if (transcript.isBlank()) return;
@@ -330,7 +319,13 @@ public class AzureOpenAiRealtimeTranscriptionClient {
                         listener.onDiscardedTranscript();
                         return;
                     }
-                    listener.onFinalTranscript(transcript);
+                    String text = transcript;
+                    if (done != null && done.overlap && lastFinal != null) {
+                        text = trimRepeatedStart(lastFinal, transcript);
+                        if (!text.equals(transcript)) System.out.println("[voice-stt] removed words repeated from the overlap: \"" + transcript.substring(0, transcript.length() - text.length()).trim() + "\"");
+                    }
+                    lastFinal = transcript;
+                    if (!text.isBlank()) listener.onFinalTranscript(text);
                 }
                 case "session.updated" -> listener.onReady();
                 case "error" -> {
@@ -352,11 +347,39 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     //    between with room on both sides. One more case is no less confident but still not speech: the model reading
     //    its own prompt back ("CPF, MediSave, critical illness, term life, premium, dependents."). ─────────────────────
 
+    /** The last line kept, for removing the words a following overlapping segment repeats. */
+    private volatile String lastFinal;
+
+    private static final java.util.regex.Pattern UNIT = java.util.regex.Pattern.compile("\\p{IsHan}|[\\p{L}\\p{N}&&[^\\p{IsHan}]]+");
+
+    /**
+     * A segment that starts inside the previous one (after a cut in the middle of speech) begins by repeating its last words.
+     * Removes those words from {@code cur} when {@code prev} really ends with them: at most 12 units (words, or Chinese
+     * characters), and a lone word of 3 letters or fewer ("the", "and") is not trusted as a repeat. If the model dropped the
+     * words at the end of {@code prev}, they are not repeated there and stay in {@code cur} where they belong.
+     */
+    static String trimRepeatedStart(String prev, String cur) {
+        List<String> p = new ArrayList<>();
+        java.util.regex.Matcher pm = UNIT.matcher(prev);
+        while (pm.find()) p.add(pm.group().toLowerCase(java.util.Locale.ROOT));
+        List<String> c = new ArrayList<>();
+        List<Integer> ends = new ArrayList<>();
+        java.util.regex.Matcher cm = UNIT.matcher(cur);
+        while (cm.find() && c.size() < 12) { c.add(cm.group().toLowerCase(java.util.Locale.ROOT)); ends.add(cm.end()); }
+        for (int k = Math.min(c.size(), p.size()); k >= 1; k--) {
+            if (!p.subList(p.size() - k, p.size()).equals(c.subList(0, k))) continue;
+            boolean han = c.get(0).codePointAt(0) >= 0x4E00 && c.get(0).codePointAt(0) <= 0x9FFF;
+            if (k == 1 && (han || c.get(0).length() <= 3)) continue;
+            return cur.substring(ends.get(k - 1)).replaceFirst("^[\\s,.;:!?，。；：！？-]+", "");
+        }
+        return cur;
+    }
+
     /** An average word log-probability below this means the model was guessing. */
     private static final double MIN_MEAN_LOGPROB = -1.0;
     /** A line made only of words from the prompt is read back from it unless the model was sure of every word. */
     private static final double MIN_MEAN_LOGPROB_FOR_PROMPT_WORDS = -0.15;
-    private static final int MIN_WORDS_FOR_ECHO = 3;
+    private static final int MIN_WORDS_FOR_ECHO = 1;
 
     /** Mean log-probability of the tokens, or 0 (fully sure, so the line is kept) if the service sent none. */
     static double meanLogprob(JsonNode logprobs) {

@@ -218,10 +218,14 @@ The current filter is **relative**: it learns how loud *this* speaker normally i
 
 We use Azure OpenAI's **realtime transcription** over a second WebSocket (server → Azure) using the **GA endpoint** (`/openai/v1/realtime?intent=transcription`, configured with a `session.update` of type `transcription`; the older `api-version=…-preview` / `transcription_session.update` API was retired and Azure now closes it with `realtime_beta_access_required`). Two important lessons shaped this class:
 
-1. **We don't use Azure's own pause detection.** In testing it rarely found pauses in continuous speech, so text appeared late or never. Instead our own **energy-based chunker** decides where to cut:
-   - it tracks the room's noise floor;
-   - it cuts at a quiet gap once a segment is long enough, or at a hard maximum of 9 seconds;
-   - segments with too little real speech (< 0.7 s, or < 0.4 s in Juno mode) are **discarded**, because feeding the model a sliver of noise makes it *invent* insurance sentences.
+1. **We don't use Azure's own pause detection.** In testing it rarely found pauses in continuous speech, so text appeared late or never. Instead our own **speech segmenter** (`SpeechSegmenter`) decides where to cut:
+   - a pause is judged **against the speaker's own recent level**, not a fixed number — in a real room the "silence" between sentences is not quiet at the microphone (measured at 400–700 on the 16-bit scale, against an old fixed limit of ~120, so no pause was ever found and every segment ran to the hard cap, cutting words in half);
+   - it cuts **in the middle of a pause** (≥ 0.3 s once a segment is 2 s long), keeping a little quiet on both sides; a shorter dip is never a cut, because it splits a phrase and leaves a tiny tail the model cannot read;
+   - it only cuts inside speech as a last resort (after 20 s without a pause), at the **quietest moment of the last 4 seconds**, and the next segment **starts 1 s before the cut** so a word dropped at the edge is heard whole in the middle of the next one; the words that segment repeats are removed from its transcript (`trimRepeatedStart`: only when the previous line really ends with them, never a lone short word);
+   - audio is **held and sent only at a cut**, so the cut point can be chosen looking backwards (Azure transcribes nothing before a commit anyway, so this adds no delay);
+   - when the speaker pauses or finishes, everything up to their **last word** is sent with 0.26 s of silence after it so the last word is not clipped (the noise between the last word and the button press is not sent); the server then waits for every sent segment's transcript (up to 8 s) before wrapping up;
+   - **what counts as speech:** only sound that stays above the pause level for 120 ms; for one person dictating (after-the-meeting modes), a short sound standing alone (nothing said in the 3 s before) needs 0.7 s of it, and a segment much quieter than the speaker has been (a TV, another room) is dropped. A short last word right after speech is kept. Lines in a script nobody dictates in (Arabic, Cyrillic, Thai…) are dropped in every mode, and greetings-only lines in the debrief modes. What still gets through is judged by the model's own confidence (see `isInvented`).
+   Set `VOICE_DEBUG_AUDIO_DUMP_DIR` to record the audio the server receives (one `.pcm` per session) when a word goes missing; the `[voice-stt]` log lines show each cut's position in that recording.
 2. **Retries.** If Azure reports a failed transcription, we still hold the audio and retry (up to twice), matching the retry to the right audio by an item id.
 
 **Better name spelling.** Speech models are weak at personal names. Two tricks help:

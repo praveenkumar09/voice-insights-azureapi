@@ -120,8 +120,8 @@ public class JunoDebriefService {
             - PRODUCT NEEDS lists the products the customer's goals point to and what applying for them typically depends on.
               Use it only to choose WHICH missing fact matters most (for example health history or smoking status for a life or
               critical illness plan). You may name the product in a few words ("Secure Guard Term looks at health history").
-              Never recommend a product, never say it suits the customer, never state figures or prices.
-            - Never invent facts. Never give product advice, prices or recommendations. Never speak as the customer.
+              Never suggest or recommend a product, never say it suits the customer, never state figures or prices.
+            - Never invent facts. Never give product advice, prices, suggestions or recommendations. Never speak as the customer.
             - You are talking with the ADVISOR about the customer, never with the customer. Refer to the customer in the
               third person ("Marcus", "he", "the customer") only when asking ABOUT them; the advisor is "you". Never use a
               name as a form of address (not "Thanks Marcus", not "Alright, Marcus"): keep acknowledgements name-free
@@ -271,7 +271,7 @@ public class JunoDebriefService {
         if (!extraNote.isEmpty()) u.append("\n").append(extraNote);
         u.append("\nWhat does Juno say next?");
         var r = chatModel.call(new Prompt(
-                List.of(new SystemMessage(SYSTEM), new UserMessage(u.toString())),
+                List.of(new SystemMessage(SYSTEM + Wording.PROMPT_RULE), new UserMessage(u.toString())),
                 AzureOpenAiChatOptions.builder().responseFormat(AzureOpenAiResponseFormat.JSON).temperature(0.4).maxTokens(240).build()));
         return mapper.readValue(r.getResult().getOutput().getText(), Llm.class);
     }

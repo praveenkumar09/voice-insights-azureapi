@@ -72,6 +72,9 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     @Value("${voice.azure.realtime.url}")
     private String realtimeUrl;
 
+    @Value("${voice.debug.audio-dump-dir:}")
+    private String audioDumpDir;
+
     @Value("${voice.azure.realtime.transcription-model}")
     private String transcriptionModel;
 
@@ -126,6 +129,9 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     private static final java.util.regex.Pattern GREETING_ONLY = java.util.regex.Pattern.compile(
             "^(?:\\W*\\b(?:hi|hello|hey|hola|bye|goodbye|thanks?|thank|you|the|a|an)\\b)+\\W*$", java.util.regex.Pattern.CASE_INSENSITIVE);
 
+    /** A letter in a script nobody dictates in here: not Latin, Chinese (Han) or Tamil. */
+    private static final java.util.regex.Pattern FOREIGN_SCRIPT = java.util.regex.Pattern.compile("[\\p{L}&&[^\\p{IsLatin}\\p{IsHan}\\p{IsTamil}]]");
+
     /** Any letter that is neither Latin nor Chinese (Han): Tamil, Arabic, Cyrillic... Advisors mix English with Mandarin, so Han is allowed. */
     private static final java.util.regex.Pattern OTHER_SCRIPT = java.util.regex.Pattern.compile("[\\p{L}&&[^\\p{IsLatin}\\p{IsHan}]]");
 
@@ -136,6 +142,18 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     private void clearPartial(WebSocketSession wsSession, VoiceSession vs) {
         vs.partial.setLength(0);
         sendJsonQuiet(wsSession, Map.of("type", "partial_transcript", "text", ""));
+    }
+
+    /** Diagnostics only (voice.debug.audio-dump-dir): appends the audio exactly as received. */
+    private void dumpAudio(WebSocketSession wsSession, byte[] bytes) {
+        try {
+            java.nio.file.Path dir = java.nio.file.Path.of(audioDumpDir);
+            java.nio.file.Files.createDirectories(dir);
+            java.nio.file.Files.write(dir.resolve(wsSession.getId() + ".pcm"), bytes,
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        } catch (Exception e) {
+            System.err.println("[voice-stt] audio dump failed: " + e.getMessage());
+        }
     }
 
     private static boolean isStrayNonEnglish(String text) {
@@ -202,7 +220,14 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                         String text = redact(ChineseScript.toSimplified(raw)); // ID and card numbers are never stored or shown
                         // A debrief with Juno in English: a line in another script (Tamil, Chinese...) is the speech model
                         // inventing words from background noise, not the advisor. It is dropped before anything reads it.
-                        if ("JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()) && "en".equals(vs.lang) && GREETING_ONLY.matcher(text).matches()) {
+                        // In every mode: a script nobody here speaks (Arabic, Cyrillic, Thai, Korean...) is invented from noise.
+                        if (FOREIGN_SCRIPT.matcher(text).find()) {
+                            System.out.println("[voice-stt] dropped a line in a script nobody here speaks: " + text);
+                            clearPartial(wsSession, vs);
+                            return;
+                        }
+                        boolean debrief = "DEBRIEF".equals(vs.profile.getCaptureMode()) || "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode());
+                        if (debrief && "en".equals(vs.lang) && GREETING_ONLY.matcher(text).matches()) {
                             System.out.println("[voice-stt] dropped a stray greeting in a debrief");
                             clearPartial(wsSession, vs);
                             return;
@@ -251,6 +276,10 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         // A debrief with Juno starts as a normal dictation (strict: little speech is never turned into words) and switches to
         // conversational timing only when the advisor hands over to Juno (see the "conversational" message).
         if ("JUNO".equals(vs.profile.getCaptureMode())) vs.transcriptionClient.setConversational(true);
+        // Dictating after a meeting is one person talking: sounds that stand alone, or are far quieter than they have been, are
+        // the room, not them. (A live conversation has two voices at different distances, so it is judged more gently.)
+        String mode = vs.profile.getCaptureMode();
+        vs.transcriptionClient.setSingleSpeaker("DEBRIEF".equals(mode) || "JUNO_DEBRIEF".equals(mode));
         vs.transcriptionClient.connect().exceptionally(ex -> {
             sendJsonQuiet(wsSession, Map.of("type", "error", "message", "Failed to connect to Azure OpenAI realtime: " + ex.getMessage()));
             return null;
@@ -263,6 +292,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         if (vs == null || vs.transcriptionClient == null) return;
         byte[] bytes = new byte[message.getPayload().remaining()];
         message.getPayload().get(bytes);
+        if (audioDumpDir != null && !audioDumpDir.isBlank()) dumpAudio(wsSession, bytes);
         vs.transcriptionClient.sendAudioChunk(bytes);
     }
 
@@ -336,7 +366,8 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
 
         // Give Azure OpenAI a moment to flush the transcription.completed event for
         // the final (safety-flush) commit above.
-        try { Thread.sleep(1500); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+        if (vs.transcriptionClient != null) vs.transcriptionClient.awaitIdle(8000);
+        else try { Thread.sleep(1500); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
 
         extractionService.extractInto(vs.profile, vs.transcript.toString(), vs.debrief, "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()));
         // Last live pass over the complete transcript, so the snapshot handed to the analysis

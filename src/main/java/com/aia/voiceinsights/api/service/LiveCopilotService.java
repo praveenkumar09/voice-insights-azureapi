@@ -227,8 +227,8 @@ public class LiveCopilotService {
             CompletableFuture<AskLlm> askCall = state.debrief || "JUNO".equals(profile.getCaptureMode()) ? null
                     : CompletableFuture.supplyAsync(() -> askNextCall(profile, tail, state));
             var response = chatModel.call(new Prompt(
-                    List.of(new SystemMessage(state.debrief ? SYSTEM_PROMPT + DEBRIEF_ADDENDUM + ("JUNO_DEBRIEF".equals(profile.getCaptureMode()) ? JUNO_DEBRIEF_NOTE : "")
-                                    : "JUNO".equals(profile.getCaptureMode()) ? SYSTEM_PROMPT + JUNO_ADDENDUM : SYSTEM_PROMPT),
+                    List.of(new SystemMessage(Wording.withRule(state.debrief ? SYSTEM_PROMPT + DEBRIEF_ADDENDUM + ("JUNO_DEBRIEF".equals(profile.getCaptureMode()) ? JUNO_DEBRIEF_NOTE : "")
+                                    : "JUNO".equals(profile.getCaptureMode()) ? SYSTEM_PROMPT + JUNO_ADDENDUM : SYSTEM_PROMPT)),
                             new UserMessage(buildUserMessage(profile, tail, state))),
                     AzureOpenAiChatOptions.builder().responseFormat(JSON_FORMAT).build()));
             Llm llm = mapper.readValue(response.getResult().getOutput().getText(), Llm.class);
@@ -287,7 +287,7 @@ public class LiveCopilotService {
                     + "RETIRED QUESTIONS: " + state.retiredQuestions + "\n\n"
                     + "FULL TRANSCRIPT SO FAR (for what has already been said):\n" + tail
                     + "\n\nRECENT TRANSCRIPT (the last thing said is at the bottom):\n" + recent;
-            var r = chatModel.call(new Prompt(List.of(new SystemMessage(ASK_PROMPT), new UserMessage(user)),
+            var r = chatModel.call(new Prompt(List.of(new SystemMessage(ASK_PROMPT + Wording.PROMPT_RULE), new UserMessage(user)),
                     AzureOpenAiChatOptions.builder().responseFormat(JSON_FORMAT).temperature(0.3).build()));
             return mapper.readValue(r.getResult().getOutput().getText(), AskLlm.class);
         } catch (Exception e) {

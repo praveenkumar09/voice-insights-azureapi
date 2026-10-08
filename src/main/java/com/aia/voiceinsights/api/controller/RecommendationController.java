@@ -61,14 +61,14 @@ public class RecommendationController {
                                     @RequestAttribute(name = SessionAuthFilter.USER_ID_ATTR, required = false) String userId) {
         if (store.findLatestRun(id).filter(r -> "RUNNING".equals(r.status())).isPresent()) {
             return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body(Map.of("error", "A recommendation is already running for this customer"));
+                    .body(Map.of("error", "A suggestion is already running for this customer"));
         }
 
         String rateLimitKey = userId != null ? userId : "anonymous";
         if (!rateLimiter.tryConsume("run:" + rateLimitKey, RUNS_PER_HOUR, Duration.ofHours(1))) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                     .header(HttpHeaders.RETRY_AFTER, "3600")
-                    .body(Map.of("error", "Too many recommendation runs this hour — please try again later"));
+                    .body(Map.of("error", "Too many suggestion runs this hour — please try again later"));
         }
 
         try {
@@ -104,7 +104,7 @@ public class RecommendationController {
         var validation = store.getStepOutput(runId, "ragValidation", RagValidationResult.class);
         if (profile.isEmpty() || merged.isEmpty() || shortlist.isEmpty() || validation.isEmpty()) {
             return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body(Map.of("error", "The recommendation run has not finished yet"));
+                    .body(Map.of("error", "The suggestion run has not finished yet"));
         }
         if (!rateLimiter.tryConsume("proposal:" + (userId != null ? userId : "anonymous"), 30, Duration.ofHours(1))) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
@@ -117,8 +117,8 @@ public class RecommendationController {
         var summary = store.getStepOutput(runId, "summary", RecommendationSummaryResult.class)
                 .orElseGet(() -> new RecommendationSummaryResult("Not available", java.util.List.of()));
         try {
-            return ResponseEntity.ok(agentService.generateProposal(profile.get(), merged.get(), persona, scoring,
-                    shortlist.get(), validation.get(), summary, language));
+            return ResponseEntity.ok(com.aia.voiceinsights.api.service.Wording.clean(agentService.generateProposal(profile.get(), merged.get(), persona, scoring,
+                    shortlist.get(), validation.get(), summary, language)));
         } catch (Exception e) {
             log.warn("Proposal ({}) failed for run {}: {}", language, runId, e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(Map.of("error", "Could not generate the proposal — please try again"));
@@ -139,7 +139,7 @@ public class RecommendationController {
         var shortlist = store.getStepOutput(runId, "productShortlist", ProductShortlistResult.class);
         var validation = store.getStepOutput(runId, "ragValidation", RagValidationResult.class);
         if (profile.isEmpty() || merged.isEmpty() || shortlist.isEmpty() || validation.isEmpty()) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", "The recommendation run has not finished yet"));
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", "The suggestion run has not finished yet"));
         }
         if (!rateLimiter.tryConsume("story:" + (userId != null ? userId : "anonymous"), 30, Duration.ofHours(1))) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(Map.of("error", "Too many requests this hour — please try again later"));
@@ -147,7 +147,7 @@ public class RecommendationController {
         var scoring = store.getStepOutput(runId, "productScoring", ProductScoringResult.class)
                 .orElseGet(() -> new ProductScoringResult(java.util.List.of(), "Not available"));
         try {
-            return ResponseEntity.ok(agentService.generateProtectionStory(profile.get(), merged.get(), scoring, shortlist.get(), validation.get()));
+            return ResponseEntity.ok(com.aia.voiceinsights.api.service.Wording.clean(agentService.generateProtectionStory(profile.get(), merged.get(), scoring, shortlist.get(), validation.get())));
         } catch (Exception e) {
             log.warn("Story failed for run {}: {}", runId, e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(Map.of("error", "Could not generate the story — please try again"));

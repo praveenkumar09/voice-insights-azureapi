@@ -158,13 +158,13 @@ public class AnalyticsService {
                     .formatted(Math.round(100.0 * hot / analysed.size()), hot, analysed.size()));
             if (!topNeeds.isEmpty()) takeaways.add("“%s” is the most frequently detected customer need (%d conversations)."
                     .formatted(topNeeds.get(0).label(), topNeeds.get(0).count()));
-            if (!topProducts.isEmpty()) takeaways.add("“%s” is the most recommended product (%d shortlists)."
+            if (!topProducts.isEmpty()) takeaways.add("“%s” is the most suggested product (%d shortlists)."
                     .formatted(topProducts.get(0).label(), topProducts.get(0).count()));
             if (withFlags > 0) takeaways.add("%d conversation%s raised live compliance flags (%d high risk) — worth a coaching review."
                     .formatted(withFlags, withFlags == 1 ? "" : "s", high));
             else takeaways.add("No live compliance flags were raised in any analysed conversation.");
             int notFollowed = analysed.size() - analysedWithRec;
-            if (notFollowed > 0) takeaways.add("%d analysed conversation%s not yet been taken through the recommendation agents."
+            if (notFollowed > 0) takeaways.add("%d analysed conversation%s not yet been taken through the suggestion agents."
                     .formatted(notFollowed, notFollowed == 1 ? " has" : "s have"));
         }
 
@@ -187,7 +187,7 @@ public class AnalyticsService {
         int debrief = (int) analysed.stream().filter(p -> "DEBRIEF".equals(p.getCaptureMode()) || "JUNO_DEBRIEF".equals(p.getCaptureMode())).count();
         Ops ops = new Ops(round1(avgSecs), round1(medianSecs), packs, reviewed, analysed.size() - debrief, debrief);
 
-        if (!secs.isEmpty()) takeaways.add("From conversation to a full recommendation takes %.0f seconds on average across %d runs."
+        if (!secs.isEmpty()) takeaways.add("From conversation to a full suggestion takes %.0f seconds on average across %d runs."
                 .formatted(avgSecs, secs.size()));
         if (packs > 0) takeaways.add("%d of %d advice packs have been reviewed and signed off by the advisor."
                 .formatted(reviewed, packs));

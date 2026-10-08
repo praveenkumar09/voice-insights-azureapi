@@ -22,7 +22,7 @@ public final class JunoPhrases {
 
     private static final Map<String, Phrases> ALL = Map.of(
             "en", new Phrases("English",
-                    "Hello, I'm Juno, your AIA Singapore digital and recommendation assistant. Before we begin, with your permission I'd like to record and analyse our conversation, so your advisor can help you better. Is that all right?",
+                    "Hello, I'm Juno, your AIA Singapore digital suggestion assistant. Before we begin, with your permission I'd like to record and analyse our conversation, so your advisor can help you better. Is that all right?",
                     "Of course, that's completely fine. I won't keep anything from this chat. Your advisor will be happy to take it from here.",
                     "Sorry, I didn't quite catch that. Is it all right if I record and analyse our chat, so your advisor can help you better? A simple yes or no is fine.",
                     "Thank you. To start, could I have your name?",
@@ -37,7 +37,7 @@ public final class JunoPhrases {
                     "Yes, that's fine", "No thanks", "Yes, that is fine.", "No, I would rather not.",
                     List.of("Mm, I see.", "Okay, got it.", "Right, thank you.", "I see, thanks.", "Alright, got it.")),
             "zh", new Phrases("Mandarin Chinese (Simplified)",
-                    "您好，我是 Juno，AIA 新加坡的数字与推荐助手。在开始之前，如果您同意，我想录下并分析我们的对话，让您的顾问能更好地帮到您。可以吗？",
+                    "您好，我是 Juno，AIA 新加坡的数字建议助手。在开始之前，如果您同意，我想录下并分析我们的对话，让您的顾问能更好地帮到您。可以吗？",
                     "没问题，完全可以。这次谈话我不会保留任何内容。您的顾问会很乐意接手。",
                     "抱歉，我没听清楚。请问我可以录下并分析我们的对话，让您的顾问更好地帮助您吗？回答“可以”或“不可以”就行。",
                     "谢谢您。首先，请问您怎么称呼？",
@@ -67,7 +67,7 @@ public final class JunoPhrases {
                     "Ya, boleh", "Tidak, terima kasih", "Ya, boleh.", "Tidak, saya tidak mahu dirakam.",
                     List.of("Mm, saya faham.", "Baik, faham.", "Okey, terima kasih.")),
             "ta", new Phrases("Tamil",
-                    "வணக்கம், நான் ஜூனோ, ஏஐஏ சிங்கப்பூரின் டிஜிட்டல் மற்றும் பரிந்துரை உதவியாளர். தொடங்குவதற்கு முன், உங்கள் அனுமதியுடன், உங்கள் ஆலோசகர் உங்களுக்கு நன்றாக உதவ, நமது உரையாடலைப் பதிவு செய்து பகுப்பாய்வு செய்ய விரும்புகிறேன். சரியா?",
+                    "வணக்கம், நான் ஜூனோ, ஏஐஏ சிங்கப்பூரின் டிஜிட்டல் யோசனை உதவியாளர். தொடங்குவதற்கு முன், உங்கள் அனுமதியுடன், உங்கள் ஆலோசகர் உங்களுக்கு நன்றாக உதவ, நமது உரையாடலைப் பதிவு செய்து பகுப்பாய்வு செய்ய விரும்புகிறேன். சரியா?",
                     "நிச்சயமாக, பரவாயில்லை. இந்த உரையாடலில் எதையும் நான் வைத்துக்கொள்ள மாட்டேன். உங்கள் ஆலோசகர் மகிழ்ச்சியுடன் தொடர்வார்.",
                     "மன்னிக்கவும், எனக்குச் சரியாகக் கேட்கவில்லை. உங்கள் ஆலோசகர் உங்களுக்கு நன்றாக உதவ, நமது உரையாடலைப் பதிவு செய்து பகுப்பாய்வு செய்யலாமா? 'ஆம்' அல்லது 'இல்லை' என்று சொன்னால் போதும்.",
                     "நன்றி. தொடங்குவதற்கு, உங்கள் பெயரைச் சொல்ல முடியுமா?",

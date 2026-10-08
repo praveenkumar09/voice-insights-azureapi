@@ -100,7 +100,7 @@ public class DebriefFollowUpService {
                        : "CONDUCT FLAGS: " + flags.stream().map(x -> "\"" + x.statement() + "\" (" + x.advice() + ")").toList() + "\n"
                          + "CONVERSATION EXCERPT (Juno asks, the advisor answers):\n" + excerpt(p.getRawTranscript()) + "\n")
                     + "\nWrite the WhatsApp draft.";
-            var r = chatModel.call(new Prompt(List.of(new SystemMessage(SYSTEM), new UserMessage(user)),
+            var r = chatModel.call(new Prompt(List.of(new SystemMessage(SYSTEM + Wording.PROMPT_RULE), new UserMessage(user)),
                     AzureOpenAiChatOptions.builder().responseFormat(AzureOpenAiResponseFormat.JSON).temperature(0.5).maxTokens(500).build()));
             Llm llm = mapper.readValue(r.getResult().getOutput().getText(), Llm.class);
             if (llm.message() == null || llm.message().isBlank()) return Optional.empty();

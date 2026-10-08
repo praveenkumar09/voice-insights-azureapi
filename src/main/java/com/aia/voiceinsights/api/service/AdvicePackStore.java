@@ -42,7 +42,7 @@ public class AdvicePackStore {
                 (rs, n) -> rs.getString(1), runId);
         if (rows.isEmpty()) return Optional.empty();
         try {
-            return Optional.of(mapper.readValue(rows.get(0), AdvicePack.class));
+            return Optional.of(mapper.readValue(Wording.cleanJson(rows.get(0)), AdvicePack.class));
         } catch (Exception e) {
             throw new RuntimeException("Failed to read the advice pack for run " + runId, e);
         }

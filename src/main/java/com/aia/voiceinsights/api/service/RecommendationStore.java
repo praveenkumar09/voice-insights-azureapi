@@ -147,7 +147,7 @@ public class RecommendationStore {
     private Object readJsonTree(String json) {
         if (json == null) return null;
         try {
-            return mapper.readValue(json, Object.class);
+            return mapper.readValue(Wording.cleanJson(json), Object.class); // house wording, also for runs saved before it
         } catch (Exception e) {
             throw new RuntimeException("Failed to deserialize stored JSON", e);
         }
@@ -161,7 +161,7 @@ public class RecommendationStore {
                 (rs, n) -> rs.getString(1), runId);
         if (rows.isEmpty() || rows.get(0) == null) return Optional.empty();
         try {
-            return Optional.of(mapper.readValue(rows.get(0), com.aia.voiceinsights.api.model.SalesReportResult.class));
+            return Optional.of(mapper.readValue(Wording.cleanJson(rows.get(0)), com.aia.voiceinsights.api.model.SalesReportResult.class));
         } catch (Exception e) {
             throw new RuntimeException("Failed to deserialize sales report for run " + runId, e);
         }
@@ -175,7 +175,7 @@ public class RecommendationStore {
                 (rs, n) -> rs.getString(1), runId, agentKey);
         if (rows.isEmpty() || rows.get(0) == null) return Optional.empty();
         try {
-            return Optional.of(mapper.readValue(rows.get(0), type));
+            return Optional.of(mapper.readValue(Wording.cleanJson(rows.get(0)), type));
         } catch (Exception e) {
             throw new RuntimeException("Failed to deserialize " + agentKey + " output for run " + runId, e);
         }

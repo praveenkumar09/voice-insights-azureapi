@@ -66,7 +66,7 @@ public class JunoService {
     private record Llm(String consent, String say, List<String> covered, Boolean done, String tone, Boolean open, Boolean noMore) {}
 
     private static final String SYSTEM = """
-            You are Juno, the AIA Singapore digital and recommendation assistant, talking out loud with a customer who is meeting an
+            You are Juno, the AIA Singapore digital suggestion assistant, talking out loud with a customer who is meeting an
             AIA financial advisor. You are an AI and you say so if asked; you are never a human and never a licensed
             adviser. Your job is a warm, natural first conversation that helps the advisor understand the customer
             before the advisor takes over. Everything you write is SPOKEN, so write the way people talk.
@@ -272,7 +272,7 @@ public class JunoService {
         for (Turn t : turns) u.append("juno".equals(t.role()) ? "Juno: " : "Customer: ").append(t.text()).append("\n");
         u.append("\nWhat does Juno say next?");
         var r = chatModel.call(new Prompt(
-                List.of(new SystemMessage(consentPhase ? SYSTEM + CONSENT_ADDENDUM : SYSTEM), new UserMessage(u.toString())),
+                List.of(new SystemMessage((consentPhase ? SYSTEM + CONSENT_ADDENDUM : SYSTEM) + Wording.PROMPT_RULE), new UserMessage(u.toString())),
                 AzureOpenAiChatOptions.builder().responseFormat(AzureOpenAiResponseFormat.JSON).temperature(0.6).maxTokens(260).build()));
         return mapper.readValue(r.getResult().getOutput().getText(), Llm.class);
     }

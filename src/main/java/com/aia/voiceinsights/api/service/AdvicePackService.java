@@ -102,7 +102,7 @@ public class AdvicePackService {
         var shortlist = runStore.getStepOutput(runId, "productShortlist", ProductShortlistResult.class);
         var validation = runStore.getStepOutput(runId, "ragValidation", RagValidationResult.class);
         if (merged.isEmpty() || shortlist.isEmpty() || validation.isEmpty()) {
-            throw new IllegalStateException("The recommendation run has not finished yet");
+            throw new IllegalStateException("The suggestion run has not finished yet");
         }
         return new Inputs(runId, profile, profile.getRawTranscript() == null ? "" : profile.getRawTranscript(), merged.get(),
                 runStore.getStepOutput(runId, "persona", CustomerPersonaResult.class)
@@ -391,7 +391,7 @@ public class AdvicePackService {
     record AdviceDraft(String needsSummary, List<DraftItem> items) {}
 
     private static final String ADVICE_PROMPT = """
-            You write the "record of advice" for an insurance advisor in Singapore: why each recommended product suits
+            You write the "record of advice" for an insurance advisor in Singapore: why each suggested product suits
             this customer. Use ONLY the facts, product evidence and transcript supplied. Be specific and plain.
             For each product (use the exact names given) return:
             - need: the customer's need it answers, in their own situation (one short sentence)
@@ -410,7 +410,7 @@ public class AdvicePackService {
         for (String name : in.shortlist().shortlistedProducts()) {
             ProductScore sc = score(in, name);
             products.append("\n### ").append(name);
-            if (sc != null) products.append(" (fit ").append(sc.score()).append("/100)\nMatch reasons: ").append(list(sc.matchReasons()))
+            if (sc != null) products.append(" (").append(Wording.relevance(sc.score())).append(")\nMatch reasons: ").append(list(sc.matchReasons()))
                     .append("\nConcerns: ").append(list(sc.concerns()));
             products.append("\nEvidence:\n");
             in.validation().citations().stream().filter(c -> c.productName().equalsIgnoreCase(name))
@@ -420,7 +420,7 @@ public class AdvicePackService {
                 + "\nPersona: " + in.persona().personaLabel() + " (" + in.persona().lifeStage() + ")"
                 + "\nSituation analysis: " + in.merged().combinedNarrative()
                 + "\nProtection gaps: " + list(in.merged().needs().protectionGaps())
-                + "\n\nRecommended products:" + products + "\n\nTranscript:\n" + in.transcript();
+                + "\n\nSuggested products:" + products + "\n\nTranscript:\n" + in.transcript();
         AdviceDraft d = agents.callJson(ADVICE_PROMPT, user, AdviceDraft.class);
 
         String hay = norm(in.transcript());
@@ -442,7 +442,7 @@ public class AdvicePackService {
         CopilotInsights c = live(in.profile());
         List<Flag> flags = c == null ? List.of() : safe(c.complianceFlags()).stream().map(f -> new Flag(f.severity(), f.statement(), f.advice())).toList();
         List<String> disclosures = new ArrayList<>(List.of(
-                "Draft prepared from the conversation and the recommendation analysis — to be reviewed and confirmed by the advisor before use.",
+                "Draft prepared from the conversation and the suggestion analysis — to be reviewed and confirmed by the advisor before use.",
                 "Product details come from the AIA product documents available to the system; confirm against the latest product summary and benefit illustration before quoting.",
                 "Illustrative layout only — not an approved AIA or regulatory form."));
         if (in.compliance() != null) safe(in.compliance().issues()).forEach(i -> disclosures.add("Compliance issue raised: " + i));
@@ -476,7 +476,7 @@ public class AdvicePackService {
 
     private FollowUp followUp(Inputs in, String tone) {
         String user = "Customer:\n" + profileBlock(in.profile()) + lifeMapBlock(in.profile())
-                + "\nRecommended directions (do not give details or prices): " + String.join(", ", in.shortlist().shortlistedProducts())
+                + "\nSuggested directions (do not give details or prices): " + String.join(", ", in.shortlist().shortlistedProducts())
                 + "\nKey talking points: " + list(in.summary().keyTalkingPoints());
         String style;
         int wa, mail;
@@ -512,7 +512,7 @@ public class AdvicePackService {
         String user = "Customer:\n" + profileBlock(in.profile()) + lifeMapBlock(in.profile()) + signals
                 + "\nPersona: " + in.persona().personaLabel() + "\nSituation: " + in.merged().combinedNarrative()
                 + "\nProtection gaps: " + list(in.merged().needs().protectionGaps())
-                + "\nRecommended products: " + String.join(", ", in.shortlist().shortlistedProducts())
+                + "\nSuggested products: " + String.join(", ", in.shortlist().shortlistedProducts())
                 + "\nTalking points: " + list(in.summary().keyTalkingPoints());
         CrmDraft d = agents.callJson(CRM_PROMPT, user, CrmDraft.class);
         LocalDate today = LocalDate.now(SG);
@@ -553,7 +553,7 @@ public class AdvicePackService {
         String user = "Customer:\n" + profileBlock(in.profile()) + lifeMapBlock(in.profile())
                 + "\nSituation: " + in.merged().combinedNarrative() + "\nAffordability: " + in.merged().affordability().rationale()
                 + "\nMissing information: " + (missing.isEmpty() ? "none" : String.join(", ", missing))
-                + "\nRecommended products and evidence:" + ev + "\nTalking points so far: " + list(in.summary().keyTalkingPoints());
+                + "\nSuggested products and evidence:" + ev + "\nTalking points so far: " + list(in.summary().keyTalkingPoints());
         MeetingDraft d = agents.callJson(MEETING_PROMPT, user, MeetingDraft.class);
         return new NextMeeting(nz2(d.objective()), safe(d.questionsToAsk()), List.copyOf(missing),
                 safe(d.likelyObjections()), safe(d.talkingPoints()));
