@@ -44,6 +44,8 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         void onClose();
         /** A transcript was thrown away as invented (the model heard noise, not speech): clear any partial text already shown for it. */
         default void onDiscardedTranscript() {}
+        /** The speaker finished an utterance (a pause long enough to be the end of a question): the text of it is on its way. */
+        default void onUtteranceEnd() {}
         /** The transcription service has confirmed the session — audio sent from now on is certain to be heard. */
         default void onReady() {}
     }
@@ -150,6 +152,15 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         receivedMs += pcm16.length / 48; // 24kHz x 2 bytes = 48 bytes per millisecond
         for (SpeechSegmenter.Segment seg : segmenter.feed(pcm16)) transmit(seg, "cut");
         logNotes();
+        if (utteranceEndMs > 0 && segmenter.utteranceEnded(utteranceEndMs, 400)) {
+            commit(); // whatever of the utterance is still held goes out now
+            // Tell the listener only once every transcript sent so far has come back, so it can use all of the words at once.
+            endNotifier.execute(() -> {
+                awaitIdle(5000);
+                try { Thread.sleep(150); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+                listener.onUtteranceEnd();
+            });
+        }
     }
 
     // ── Segments awaiting a transcript. Azure occasionally reports "Input transcription failed" for an item; the
@@ -195,6 +206,18 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     /** One person talking (an advisor dictating): sounds that stand alone, or are far quieter than they have been, are not them. */
     public void setSingleSpeaker(boolean on) {
         segmenter.setSingleSpeaker(on);
+    }
+
+    private volatile int utteranceEndMs;
+    private final java.util.concurrent.ExecutorService endNotifier = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "voice-utterance-end");
+        t.setDaemon(true);
+        return t;
+    });
+
+    /** Have the speaker's end of utterance detected here (after this much quiet) and reported to the listener. 0 turns it off. */
+    public void setUtteranceEnd(int quietMs) {
+        utteranceEndMs = quietMs;
     }
 
     private void logNotes() {

@@ -71,7 +71,15 @@ public class ProductVectorSearchService {
 
     /** Embeds {@code query} and returns the top matching product chunks above the similarity threshold. */
     public List<ProductChunkMatch> search(String query) {
-        float[] queryEmbedding = embeddingModel.embed(query);
+        return search(embeddingModel.embed(query));
+    }
+
+    /** The question as a vector, so several searches can share one embedding call. */
+    public float[] embed(String query) {
+        return embeddingModel.embed(query);
+    }
+
+    public List<ProductChunkMatch> search(float[] queryEmbedding) {
         String vectorLiteral = toVectorLiteral(queryEmbedding);
 
         List<ProductChunkMatch> matches = jdbc.query(
@@ -87,7 +95,10 @@ public class ProductVectorSearchService {
      * documents.
      */
     public List<ProductChunkMatch> searchWithinProduct(String productName, String query, int limit) {
-        float[] queryEmbedding = embeddingModel.embed(query);
+        return searchWithinProduct(productName, embeddingModel.embed(query), limit);
+    }
+
+    public List<ProductChunkMatch> searchWithinProduct(String productName, float[] queryEmbedding, int limit) {
         String vectorLiteral = toVectorLiteral(queryEmbedding);
 
         List<ProductChunkMatch> matches = jdbc.query(

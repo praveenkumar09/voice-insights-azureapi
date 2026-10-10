@@ -104,9 +104,18 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         boolean debrief = "debrief".equalsIgnoreCase(modeParam) || junoDebrief;
         // ?mode=juno: the AI host (Juno) is talking with the customer; it is analysed like a live conversation.
         boolean juno = "juno".equalsIgnoreCase(modeParam);
+        // ?mode=ask: the advisor is putting questions to Juno about a finished suggestion. It is only listening: nothing is
+        // saved and nothing is analysed — the question text is all that matters.
+        boolean ask = "ask".equalsIgnoreCase(modeParam);
         CustomerProfile fresh = new CustomerProfile();
-        fresh.setCaptureMode(junoDebrief ? "JUNO_DEBRIEF" : debrief ? "DEBRIEF" : juno ? "JUNO" : "LIVE");
-        CustomerProfile profile = profileStore.save(fresh);
+        fresh.setCaptureMode(ask ? "ASK" : junoDebrief ? "JUNO_DEBRIEF" : debrief ? "DEBRIEF" : juno ? "JUNO" : "LIVE");
+        CustomerProfile profile;
+        if (ask) {
+            fresh.setId("ask-" + java.util.UUID.randomUUID());
+            profile = fresh;
+        } else {
+            profile = profileStore.save(fresh);
+        }
         VoiceSession vs = new VoiceSession(profile, debrief);
         sessions.put(wsSession.getId(), vs);
 
@@ -241,8 +250,14 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                         vs.partial.setLength(0);
                         vs.transcript.append(text).append(" ");
                         sendJsonQuiet(wsSession, Map.of("type", "final_transcript", "text", text));
+                        if ("ASK".equals(vs.profile.getCaptureMode())) return; // a question for Juno: nothing to extract or analyse
                         extractionExecutor.submit(() -> reExtractAndPush(wsSession, vs));
                         extractionExecutor.submit(() -> pushCopilot(wsSession, vs));
+                    }
+
+                    @Override
+                    public void onUtteranceEnd() {
+                        sendJsonQuiet(wsSession, Map.of("type", "utterance_end"));
                     }
 
                     @Override
@@ -275,11 +290,14 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                 });
         // A debrief with Juno starts as a normal dictation (strict: little speech is never turned into words) and switches to
         // conversational timing only when the advisor hands over to Juno (see the "conversational" message).
-        if ("JUNO".equals(vs.profile.getCaptureMode())) vs.transcriptionClient.setConversational(true);
+        if ("JUNO".equals(vs.profile.getCaptureMode()) || "ASK".equals(vs.profile.getCaptureMode())) vs.transcriptionClient.setConversational(true);
         // Dictating after a meeting is one person talking: sounds that stand alone, or are far quieter than they have been, are
         // the room, not them. (A live conversation has two voices at different distances, so it is judged more gently.)
         String mode = vs.profile.getCaptureMode();
         vs.transcriptionClient.setSingleSpeaker("DEBRIEF".equals(mode) || "JUNO_DEBRIEF".equals(mode));
+        // A question for Juno ends when the advisor has been quiet for a moment; the server judges that (against their own
+        // level) and tells the browser, which asks the question once its words have come back.
+        if ("ASK".equals(mode)) vs.transcriptionClient.setUtteranceEnd(1100);
         vs.transcriptionClient.connect().exceptionally(ex -> {
             sendJsonQuiet(wsSession, Map.of("type", "error", "message", "Failed to connect to Azure OpenAI realtime: " + ex.getMessage()));
             return null;
@@ -369,6 +387,12 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         if (vs.transcriptionClient != null) vs.transcriptionClient.awaitIdle(8000);
         else try { Thread.sleep(1500); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
 
+        if ("ASK".equals(vs.profile.getCaptureMode())) { // nothing was kept: just end the session
+            sendJsonQuiet(wsSession, Map.of("type", "session_ended"));
+            if (vs.transcriptionClient != null) vs.transcriptionClient.close();
+            try { if (wsSession.isOpen()) wsSession.close(CloseStatus.NORMAL); } catch (Exception ignored) { /* afterConnectionClosed cleans up */ }
+            return;
+        }
         extractionService.extractInto(vs.profile, vs.transcript.toString(), vs.debrief, "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()));
         // Last live pass over the complete transcript, so the snapshot handed to the analysis
         // stage (and the live-vs-final comparison) is the best the live layer can produce.

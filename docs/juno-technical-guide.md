@@ -672,3 +672,17 @@ Being upfront about limits builds trust.
 ---
 
 *Written for the Voice Insights / Juno demo. If something in the code has changed since, the code is the source of truth — the file paths above will take you straight to it.*
+
+---
+
+## 7. Talk it through with Juno (the advisor questions the suggestions, out loud)
+
+**Where:** the *Live vs final* stage of a finished run, below the comparison (`components/ask/AskJuno.tsx`, `hooks/useAskJuno.ts`; server `JunoAskService`, `JunoAskController`, `JunoAskStore`).
+
+**Flow.** The advisor presses the orb and asks. The voice socket runs in `?mode=ask`: transcription only, no profile saved, nothing analysed. The **server** decides the question is finished (≥ 1.1 s quiet after ≥ 0.4 s of speech, judged against the speaker like every pause — see §5.3), waits until every transcript of it has come back, and sends `utterance_end`. The browser then POSTs the question to `/api/recommendations/{runId}/ask`, which streams one JSON event per sentence (server-sent events). Each sentence is spoken as soon as it arrives (`/api/juno/speak`, one clip per sentence, fetched ahead); its text appears when its audio starts. A short spoken "Mm, let me think" covers a slow start. The microphone is muted while Juno speaks. Pressing the orb interrupts (aborts the stream and stops the audio; what was said so far is kept and the answer is marked "you cut in"). Typed questions and starter chips work too. The discussion is saved with the run (`juno_ask_turns`) and reloads next time.
+
+**Grounding.** `JunoAskService.build` writes the run out as numbered sources: C = what the customer shared (or the advisor's debrief), A = the agents' analysis (persona, gaps, risk, affordability, per-product reasons and cautions in words, live-vs-final), K = compliance findings, D = product-document evidence. Each question also searches the product documents (the question is embedded once and shared by the searches) and adds the excerpts as more D sources. The model writes one sentence per line and ends every factual line with its source ids; the server lifts the ids out (the screen shows them as chips; tap one to read the source). A factual sentence the model left uncited gets the closest source marked *inferred* (dashed chip); one with no source at all is underlined dotted ("Juno could not point to a source for this"). All text passes through `Wording` (suggest, never recommend; relevance in words, never a percentage).
+
+**Guardrails in the prompt.** Juno cannot change, reorder or drop the suggestions and never pretends to; it says so, says what the advisor's alternative would leave uncovered, and that new facts mean updating the profile and running the analysis again. It never names a product, product type or approach that is not in the sources, never calls a product suitable/right/best, never promises approval, returns or guarantees, refuses prompt injection, and steers off-topic questions back. It answers in the language the advisor used (English, Mandarin, Malay, Tamil).
+
+**Diagnostics.** `[voice-stt]` lines for the listening side; `Juno ask …: first sentence Nms after the question (context, document search, first words from the model)` for the answering side.

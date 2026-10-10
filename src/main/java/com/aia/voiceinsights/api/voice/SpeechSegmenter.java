@@ -107,7 +107,23 @@ final class SpeechSegmenter {
     private long prevVoicedEndFrame = -1;                                    // stream position of the last voiced frame sent
     private boolean carryOverlap;                                            // the next segment starts with audio already sent
 
+    private long lastVoicedGlobal = -1;                                      // stream position of the latest voiced frame
+    private int voicedSinceEnd;                                              // voiced frames since the last end of an utterance
+
     private final List<String> notes = new ArrayList<>();
+
+    /**
+     * True once, when the speaker has said something (at least {@code minVoicedMs} of it) and then been quiet for
+     * {@code quietMs}: the end of a whole utterance, as opposed to a pause inside it. Judged like every pause here: against the
+     * speaker, so a noisy room does not hide it and a soft word does not fake it.
+     */
+    boolean utteranceEnded(int quietMs, int minVoicedMs) {
+        if (voicedSinceEnd * FRAME_MS < minVoicedMs) return false;
+        long quiet = (receivedFrames - 1 - lastVoicedGlobal) * FRAME_MS;
+        if (quiet < quietMs) return false;
+        voicedSinceEnd = 0;
+        return true;
+    }
 
     /** Why something was dropped since the last call (for the log). */
     List<String> drainNotes() {
@@ -185,8 +201,15 @@ final class SpeechSegmenter {
         } else {
             runLen++;
             int n = voiced.size();
-            if (runLen == VOICED_RUN_FRAMES) for (int k = n - VOICED_RUN_FRAMES; k < n; k++) voiced.set(k, true);
-            else if (runLen > VOICED_RUN_FRAMES) voiced.set(n - 1, true);
+            if (runLen == VOICED_RUN_FRAMES) {
+                for (int k = n - VOICED_RUN_FRAMES; k < n; k++) voiced.set(k, true);
+                voicedSinceEnd += VOICED_RUN_FRAMES;
+                lastVoicedGlobal = receivedFrames - 1;
+            } else if (runLen > VOICED_RUN_FRAMES) {
+                voiced.set(n - 1, true);
+                voicedSinceEnd++;
+                lastVoicedGlobal = receivedFrames - 1;
+            }
         }
     }
 
