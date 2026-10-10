@@ -153,11 +153,15 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         for (SpeechSegmenter.Segment seg : segmenter.feed(pcm16)) transmit(seg, "cut");
         logNotes();
         if (utteranceEndMs > 0 && segmenter.utteranceEnded(utteranceEndMs, 400)) {
+            final long detectedAt = System.currentTimeMillis();
+            System.out.println("[voice-stt] end of question detected (" + utteranceEndMs + "ms of quiet) at " + detectedAt);
             commit(); // whatever of the utterance is still held goes out now
             // Tell the listener only once every transcript sent so far has come back, so it can use all of the words at once.
             endNotifier.execute(() -> {
                 awaitIdle(5000);
-                try { Thread.sleep(150); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+                try { Thread.sleep(60); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+                long now = System.currentTimeMillis();
+                System.out.println("[voice-stt] transcripts back " + (now - detectedAt) + "ms after the end was detected; telling the browser at " + now);
                 listener.onUtteranceEnd();
             });
         }
@@ -214,6 +218,17 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         t.setDaemon(true);
         return t;
     });
+
+    /** Commits what is held and tells the listener once every transcript has come back (used when the browser decides the speaker is done). */
+    public void commitAndNotify() {
+        commit();
+        if (utteranceEndMs <= 0) return;
+        endNotifier.execute(() -> {
+            awaitIdle(5000);
+            try { Thread.sleep(60); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+            listener.onUtteranceEnd();
+        });
+    }
 
     /** Have the speaker's end of utterance detected here (after this much quiet) and reported to the listener. 0 turns it off. */
     public void setUtteranceEnd(int quietMs) {

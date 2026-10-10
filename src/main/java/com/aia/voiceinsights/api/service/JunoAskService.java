@@ -498,8 +498,23 @@ public class JunoAskService {
 
     // ── Product documents, searched for this question ───────────────────────────────────────────────────────────
 
+    /** Words that mean the advisor wants a detail of a product document, as opposed to the reasoning already in the file. */
+    private static final Pattern DETAIL = Pattern.compile("(?i)\\b(exclu\\w*|limit\\w*|premiums?|price\\w*|cost\\w*|charges?|fees?|claims?|waiting|riders?|benefits?|covers?|coverage|age|years?|surrender|withdraw\\w*|guarantee\\w*|returns?|documents?|says?|states?|payout|pays?|paid|eligib\\w*|underwrit\\w*|medical|smok\\w*|health|pre-?existing|critical|disab\\w*|death|tpd|how much|how long|what happens|fund\\w*|invest\\w*|risk)\\b");
+
+    /**
+     * Searching the product documents costs about 0.6 s, so it is done only when the question asks for a detail of them. The
+     * reasoning questions ("why first?", "what are the weak points?", "what drove this?") are answered from the evidence already
+     * gathered for the run, which is in Juno's notes.
+     */
+    private boolean needsDocuments(String question) {
+        String q = question;
+        for (String name : productSearch.productNames()) q = q.replaceAll("(?i)" + Pattern.quote(name), " ");
+        return DETAIL.matcher(q).find();
+    }
+
     private List<Source> retrieve(String question, Context ctx) {
         List<Source> out = new ArrayList<>();
+        if (!needsDocuments(question)) return out;
         Set<String> seen = new HashSet<>();
         ctx.sources().values().stream().filter(s -> "document".equals(s.kind())).forEach(s -> seen.add(key(s.text())));
         int next = (int) ctx.sources().values().stream().filter(s -> "document".equals(s.kind())).count() + 1;

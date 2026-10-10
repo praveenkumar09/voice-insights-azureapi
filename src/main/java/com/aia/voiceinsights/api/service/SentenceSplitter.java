@@ -14,7 +14,7 @@ final class SentenceSplitter {
 
     private static final Set<String> ABBREVIATIONS = Set.of("mr", "mrs", "ms", "dr", "vs", "no", "st", "e.g", "i.e", "approx", "inc", "ltd", "pte");
     private static final int MAX_SENTENCE = 320;
-    private static final int FIRST_CLAUSE_MIN = 42;   // an opening clause shorter than this is not worth speaking on its own   // a run-on is cut at a space rather than held back for ever
+    private static final int FIRST_CLAUSE_MIN = 30;   // an opening clause shorter than this is not worth speaking on its own   // a run-on is cut at a space rather than held back for ever
 
     private final StringBuilder buf = new StringBuilder();
     private boolean first = true;   // nothing has been handed over yet

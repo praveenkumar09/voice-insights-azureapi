@@ -297,7 +297,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         vs.transcriptionClient.setSingleSpeaker("DEBRIEF".equals(mode) || "JUNO_DEBRIEF".equals(mode));
         // A question for Juno ends when the advisor has been quiet for a moment; the server judges that (against their own
         // level) and tells the browser, which asks the question once its words have come back.
-        if ("ASK".equals(mode)) vs.transcriptionClient.setUtteranceEnd(1100);
+        if ("ASK".equals(mode)) vs.transcriptionClient.setUtteranceEnd(850);
         vs.transcriptionClient.connect().exceptionally(ex -> {
             sendJsonQuiet(wsSession, Map.of("type", "error", "message", "Failed to connect to Azure OpenAI realtime: " + ex.getMessage()));
             return null;
@@ -323,7 +323,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         // "commit": the advisor paused dictating. Server-side VAD only finalizes at a pause in the audio, and a
         // paused browser sends none — so commit whatever has been heard, or the last sentence stays unfinished.
         if ("commit".equals(node.path("type").asText("")) && vs.transcriptionClient != null) {
-            vs.transcriptionClient.commit();
+            vs.transcriptionClient.commitAndNotify();
             return;
         }
         // "conversational": the advisor handed over to Juno, whose questions are answered in short replies.
