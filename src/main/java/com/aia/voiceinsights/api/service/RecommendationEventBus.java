@@ -25,14 +25,26 @@ public class RecommendationEventBus {
         return sinkFor(runId).asFlux();
     }
 
+    /**
+     * Agents publish from several threads at once now that the three analysis agents run in parallel. A default
+     * Reactor sink rejects (and silently drops) an emit that overlaps another, which would leave a card stuck on
+     * "running" in the UI — so emits to one run's sink are serialized.
+     */
     public void publish(String runId, RecommendationEvent event) {
-        sinkFor(runId).tryEmitNext(event);
+        Sinks.Many<RecommendationEvent> sink = sinkFor(runId);
+        synchronized (sink) {
+            sink.tryEmitNext(event);
+        }
     }
 
     /** Completes the run's stream and drops its sink — call once the run reaches a terminal state. */
     public void complete(String runId) {
         Sinks.Many<RecommendationEvent> sink = sinks.remove(runId);
-        if (sink != null) sink.tryEmitComplete();
+        if (sink != null) {
+            synchronized (sink) {
+                sink.tryEmitComplete();
+            }
+        }
     }
 
     private Sinks.Many<RecommendationEvent> sinkFor(String runId) {

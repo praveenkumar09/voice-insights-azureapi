@@ -24,7 +24,7 @@ public record RecommendationEvent(String type, String agent, Object payload) {
     }
 
     public static RecommendationEvent agentCompleted(String agent, Object result) {
-        return new RecommendationEvent("agent_completed", agent, result);
+        return new RecommendationEvent("agent_completed", agent, com.aia.voiceinsights.api.service.Wording.clean(result));
     }
 
     public static RecommendationEvent agentFailed(String agent, String message) {

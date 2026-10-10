@@ -9,6 +9,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -146,7 +147,7 @@ public class RecommendationStore {
     private Object readJsonTree(String json) {
         if (json == null) return null;
         try {
-            return mapper.readValue(json, Object.class);
+            return mapper.readValue(Wording.cleanJson(json), Object.class); // house wording, also for runs saved before it
         } catch (Exception e) {
             throw new RuntimeException("Failed to deserialize stored JSON", e);
         }
@@ -160,7 +161,7 @@ public class RecommendationStore {
                 (rs, n) -> rs.getString(1), runId);
         if (rows.isEmpty() || rows.get(0) == null) return Optional.empty();
         try {
-            return Optional.of(mapper.readValue(rows.get(0), com.aia.voiceinsights.api.model.SalesReportResult.class));
+            return Optional.of(mapper.readValue(Wording.cleanJson(rows.get(0)), com.aia.voiceinsights.api.model.SalesReportResult.class));
         } catch (Exception e) {
             throw new RuntimeException("Failed to deserialize sales report for run " + runId, e);
         }
@@ -174,10 +175,20 @@ public class RecommendationStore {
                 (rs, n) -> rs.getString(1), runId, agentKey);
         if (rows.isEmpty() || rows.get(0) == null) return Optional.empty();
         try {
-            return Optional.of(mapper.readValue(rows.get(0), type));
+            return Optional.of(mapper.readValue(Wording.cleanJson(rows.get(0)), type));
         } catch (Exception e) {
             throw new RuntimeException("Failed to deserialize " + agentKey + " output for run " + runId, e);
         }
+    }
+
+    /** How long each completed run took, in seconds: runId -> seconds (time-to-insight on the admin dashboard). */
+    public Map<String, Double> completedRunSeconds() {
+        Map<String, Double> out = new HashMap<>();
+        jdbc.query("""
+                SELECT run_id, EXTRACT(EPOCH FROM (completed_at - started_at))
+                FROM %s.recommendation_runs WHERE status = 'COMPLETED' AND completed_at IS NOT NULL
+                """.formatted(schema), rs -> { out.put(rs.getString(1), rs.getDouble(2)); });
+        return out;
     }
 
     /** Latest completed run per customer profile: profileId -> runId (analytics and "has a recommendation" checks). */

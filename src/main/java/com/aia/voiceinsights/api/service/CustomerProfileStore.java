@@ -76,6 +76,11 @@ public class CustomerProfileStore {
         }
     }
 
+    /** Removes a profile entirely — used when a customer declines consent to a Juno conversation. */
+    public void delete(String id) {
+        jdbc.update("DELETE FROM %s.customer_profiles WHERE id = ?".formatted(schema), id);
+    }
+
     public Optional<CustomerProfile> findById(String id) {
         List<String> rows = jdbc.query(
                 "SELECT profile_json::text FROM %s.customer_profiles WHERE id = ?".formatted(schema),

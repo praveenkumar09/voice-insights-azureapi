@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.azure.openai.AzureOpenAiChatOptions;
 import org.springframework.ai.azure.openai.AzureOpenAiResponseFormat;
@@ -33,6 +34,20 @@ public class ProfileExtractionService {
             ONLY facts actually stated or clearly implied in the transcript; leave
             a field null (or an empty array) if it hasn't come up yet. Never invent
             details that were not said.
+            The conversation may be in English, Mandarin, Malay or Tamil, or a mix. Always write every field and label in
+            English (translate goals, occupation and so on). Personal names must be written in Latin letters: if a name is said in Chinese, Tamil or another script, write it romanised (for example pinyin), never in the original script. If the customer spells their name letter by letter
+            (for example "C-H-E-N"), the spelled letters are the correct spelling of that name — use them
+            instead of any earlier guess.
+            The profile describes ONE person: the main customer (the person being advised, e.g. the one named "Mr Lim").
+            Facts about anyone else (spouse, wife, husband, children, parents, friends) must NEVER go into customerName,
+            age, occupation, incomeBand or existingPolicies. For example, "his wife is a housewife" or "she is 38" is about the
+            wife, so the customer's occupation and age stay null unless stated about the customer himself or herself. Count
+            such people in "dependents" where they depend on the customer, and record their details (spouse's job, age,
+            cover) in "notes" instead, saying whose they are. A pronoun like "she" or "他太太" refers to the person last
+            named: check who it refers to before assigning a fact. Pronoun gender matters: if the customer is "Mr", "he"
+            or "他", then a fact about "she", "her" or "她" is about someone else (usually the wife), and the reverse for a
+            female customer. Speech recognition often turns "太太是" into "她是/她还是", so treat "她..." about a male customer
+            as the spouse.
 
             Respond with ONLY a JSON object, no markdown fences, no commentary:
             {
@@ -56,10 +71,22 @@ public class ProfileExtractionService {
             you extract is about the CUSTOMER (the person being described), never about the advisor.
             """;
 
+    /** In a debrief with Juno: the advisor's dictation, then Juno's questions and the advisor's answers, with the speech model's stray lines to ignore. */
+    private static final String JUNO_DEBRIEF_NOTE = """
+
+            The transcript may also contain lines labelled [Juno] (an AI assistant's questions to the advisor) and [Advisor]
+            (the advisor's answers). Take facts ONLY from the advisor's words (unlabelled or [Advisor]); a [Juno] line is
+            a question or read-back, never a source of facts.
+            The transcript comes from speech recognition. After a pause or in background noise it sometimes invents stray lines
+            that have nothing to do with the meeting: a greeting, a stray name, a list of insurance terms ("CPF, MediSave,
+            premium"), a question to nobody, a phone-call script. Ignore such lines. Never take a fact from a line that does not
+            fit the rest of what the advisor said.
+            """;
+
     private final ChatModel chatModel;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public ProfileExtractionService(ChatModel chatModel) {
+    public ProfileExtractionService(@Qualifier("azureOpenAiChatModel") ChatModel chatModel) {
         this.chatModel = chatModel;
     }
 
@@ -69,11 +96,16 @@ public class ProfileExtractionService {
     }
 
     public void extractInto(CustomerProfile profile, String transcript, boolean debrief) {
+        extractInto(profile, transcript, debrief, false);
+    }
+
+    /** {@code junoDebrief}: the advisor is working with Juno, so the transcript carries labels and possible stray lines. */
+    public void extractInto(CustomerProfile profile, String transcript, boolean debrief, boolean junoDebrief) {
         if (transcript == null || transcript.isBlank()) return;
 
         try {
             var response = chatModel.call(new Prompt(
-                    List.of(new SystemMessage(debrief ? SYSTEM_PROMPT + DEBRIEF_ADDENDUM : SYSTEM_PROMPT),
+                    List.of(new SystemMessage(debrief ? SYSTEM_PROMPT + DEBRIEF_ADDENDUM + (junoDebrief ? JUNO_DEBRIEF_NOTE : "") : SYSTEM_PROMPT),
                             new UserMessage("Transcript so far:\n" + transcript)),
                     AzureOpenAiChatOptions.builder().responseFormat(JSON_FORMAT).build()));
 

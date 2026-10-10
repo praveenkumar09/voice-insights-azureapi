@@ -8,6 +8,7 @@ import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.GraphStateException;
 import org.bsc.langgraph4j.StateGraph;
 import org.bsc.langgraph4j.action.AsyncNodeAction;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -16,6 +17,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Builds the per-run LangGraph4j graph for the full AIA Singapore advisory
@@ -74,6 +78,23 @@ public class RecommendationGraphFactory {
     private final RecommendationStore store;
     private final RecommendationEventBus eventBus;
 
+    /**
+     * Where the three parallel analysis agents actually run. {@code node_async} only wraps a synchronous call in an
+     * already-completed future, so the work still happens on the calling thread, one node after another — LangGraph4j
+     * fans out to the three branches but each one finishes before the next starts. Handing each branch a future that
+     * is genuinely executing elsewhere is what makes them concurrent; the graph then waits for all three before merge.
+     */
+    private final ExecutorService parallelExecutor = Executors.newFixedThreadPool(12, r -> {
+        Thread t = new Thread(r, "recommendation-parallel");
+        t.setDaemon(true);
+        return t;
+    });
+
+    @PreDestroy
+    public void shutdown() {
+        parallelExecutor.shutdown();
+    }
+
     public RecommendationGraphFactory(RecommendationAgentService agentService,
                                        RecommendationStore store,
                                        RecommendationEventBus eventBus) {
@@ -85,9 +106,13 @@ public class RecommendationGraphFactory {
     public CompiledGraph<RecommendationState> build(String runId, CustomerProfile profile) throws GraphStateException {
         StateGraph<RecommendationState> graph = new StateGraph<>(RecommendationState::new);
 
-        graph.addNode("need", AsyncNodeAction.node_async(state -> runNeed(runId, profile)));
-        graph.addNode("risk", AsyncNodeAction.node_async(state -> runRisk(runId, profile)));
-        graph.addNode("affordability", AsyncNodeAction.node_async(state -> runAffordability(runId, profile)));
+        // Stage 1 — truly parallel: each branch runs on its own thread (see parallelExecutor).
+        graph.addNode("need", (AsyncNodeAction<RecommendationState>) state ->
+                CompletableFuture.supplyAsync(() -> runNeed(runId, profile), parallelExecutor));
+        graph.addNode("risk", (AsyncNodeAction<RecommendationState>) state ->
+                CompletableFuture.supplyAsync(() -> runRisk(runId, profile), parallelExecutor));
+        graph.addNode("affordability", (AsyncNodeAction<RecommendationState>) state ->
+                CompletableFuture.supplyAsync(() -> runAffordability(runId, profile), parallelExecutor));
         graph.addNode("merge", AsyncNodeAction.node_async(state -> runMerge(runId, profile, state)));
         graph.addNode("persona", AsyncNodeAction.node_async(state -> runPersona(runId, profile, state)));
         graph.addNode("productScoring", AsyncNodeAction.node_async(state -> runProductScoring(runId, profile, state)));

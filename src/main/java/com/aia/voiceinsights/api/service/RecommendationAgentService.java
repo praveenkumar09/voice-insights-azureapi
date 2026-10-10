@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.azure.openai.AzureOpenAiChatOptions;
@@ -81,7 +82,7 @@ public class RecommendationAgentService {
      *  agents within one run (and several concurrent runs) call the model at once. */
     private final ExecutorService llmExecutor = Executors.newFixedThreadPool(24);
 
-    public RecommendationAgentService(ChatModel chatModel, ProductVectorSearchService productSearch) {
+    public RecommendationAgentService(@Qualifier("azureOpenAiChatModel") ChatModel chatModel, ProductVectorSearchService productSearch) {
         this.chatModel = chatModel;
         this.productSearch = productSearch;
     }
@@ -95,7 +96,7 @@ public class RecommendationAgentService {
 
     private static final String NEED_SYSTEM_PROMPT = ("""
             You are the Need Agent in AIA Singapore's voice-driven insurance
-            recommendation engine. Purpose: determine the customer's intentions —
+            suggestion engine. Purpose: determine the customer's intentions —
             what are they actually looking for, in their own words and context. You
             are given a customer profile captured live during an AIA agent's
             conversation with the customer, plus candidate excerpts from AIA
@@ -125,7 +126,7 @@ public class RecommendationAgentService {
 
     private static final String RISK_SYSTEM_PROMPT = """
             You are the Risk Agent in AIA Singapore's voice-driven insurance
-            recommendation engine. Purpose: identify what could financially affect
+            suggestion engine. Purpose: identify what could financially affect
             this customer — their potential financial and insurance risk exposure
             (occupation risk, health mentions, dependents, existing coverage gaps,
             lifestyle mentions) — from a customer profile captured live during an
@@ -147,8 +148,8 @@ public class RecommendationAgentService {
 
     private static final String AFFORDABILITY_SYSTEM_PROMPT = """
             You are the Affordability Agent in AIA Singapore's voice-driven
-            insurance recommendation engine. Purpose: prevent unsuitable
-            recommendations by calculating a realistic premium range for this
+            insurance suggestion engine. Purpose: prevent unsuitable
+            suggestions by calculating a realistic premium range for this
             customer — grounded BOTH in what they said in conversation (income/
             budget signals in the profile) AND in real premium/pricing information
             from AIA Singapore's product catalog excerpts provided below. If the
@@ -174,12 +175,12 @@ public class RecommendationAgentService {
     // ── Merge — synthesis of Need + Risk + Affordability ────────────────────
 
     private static final String MERGE_SYSTEM_PROMPT = """
-            You are the synthesis step of AIA Singapore's insurance recommendation
+            You are the synthesis step of AIA Singapore's insurance suggestion
             workflow. You are given a customer profile and the independent outputs
             of the Need, Risk, and Affordability agents. Combine them into one
             coherent narrative an AIA agent can read aloud to the customer — 3-5
             sentences, plain language, no jargon, reconciling all three where
-            relevant (e.g. affordability constraints against recommended categories).
+            relevant (e.g. affordability constraints against suggested categories).
 
             Respond with ONLY a JSON object, no markdown fences, no commentary:
             { "combinedNarrative": "..." }
@@ -204,7 +205,7 @@ public class RecommendationAgentService {
 
     private static final String PERSONA_SYSTEM_PROMPT = """
             You are the Customer Persona Agent in AIA Singapore's insurance
-            recommendation engine. Purpose: group this customer into a meaningful
+            suggestion engine. Purpose: group this customer into a meaningful
             life-stage segment AIA advisors recognize, from their profile and the
             merged Need/Risk/Affordability analysis. Typical AIA Singapore
             life-stage segments include (use these as a guide, not a rigid list):
@@ -240,7 +241,7 @@ public class RecommendationAgentService {
 
     private static final String SCORING_SYSTEM_PROMPT = """
             You are the Product Scoring Agent in AIA Singapore's insurance
-            recommendation engine. Purpose: score EVERY product in the catalog
+            suggestion engine. Purpose: score EVERY product in the catalog
             below against this customer, to produce an unbiased ranking — not just
             the ones that look like an obvious match. You are given the customer's
             profile, persona, and merged Need/Risk/Affordability analysis, plus an
@@ -300,10 +301,10 @@ public class RecommendationAgentService {
         List<String> shortlist = ranked.stream().limit(SHORTLIST_SIZE).map(ProductScore::productName).toList();
 
         StringBuilder rationale = new StringBuilder("Top " + shortlist.size() + " of " + ranked.size()
-                + " scored products, ranked by fit score: ");
+                + " products considered, in order of relevance: ");
         for (int i = 0; i < ranked.size() && i < SHORTLIST_SIZE; i++) {
             if (i > 0) rationale.append("; ");
-            rationale.append(ranked.get(i).productName()).append(" (").append(ranked.get(i).score()).append("/100)");
+            rationale.append(ranked.get(i).productName()).append(" (").append(Wording.relevance(ranked.get(i).score()).toLowerCase()).append(")");
         }
         return new ProductShortlistResult(shortlist, rationale.toString());
     }
@@ -312,14 +313,14 @@ public class RecommendationAgentService {
 
     private static final String RAG_VALIDATION_SYSTEM_PROMPT = """
             You are the RAG Validation Agent in AIA Singapore's insurance
-            recommendation engine. Purpose: validate that the shortlisted product
-            recommendation is factually correct by checking it against real
+            suggestion engine. Purpose: validate that the shortlisted product
+            suggestion is factually correct by checking it against real
             excerpts retrieved from AIA Singapore's own product documents
             (Product Summary, Contract, Fact Sheet, Rider, FAQ). You are given the
             merged customer analysis and the retrieved evidence excerpts per
             shortlisted product below.
 
-            Determine whether the evidence actually supports recommending these
+            Determine whether the evidence actually supports suggesting these
             products for this customer's identified needs. Be honest — if the
             evidence is thin or doesn't clearly support a claim, say so in "notes"
             and set allClaimsSupported to false.
@@ -363,11 +364,11 @@ public class RecommendationAgentService {
 
     private static final String COMPLIANCE_SYSTEM_PROMPT = """
             You are the Compliance Check Agent in AIA Singapore's insurance
-            recommendation engine — an automated compliance officer. Purpose:
-            catch recommendations that would violate basic suitability rules
+            suggestion engine — an automated compliance officer. Purpose:
+            catch suggestions that would violate basic suitability rules
             before they reach the customer. Check exactly three things against the
             data provided:
-              1. Affordability — does the shortlisted recommendation's likely
+              1. Affordability — does the shortlisted suggestion's likely
                  premium fit within the Affordability agent's estimated range?
               2. Eligibility — is there anything in the profile (age, occupation,
                  stated conditions) that would make the customer ineligible for
@@ -411,13 +412,13 @@ public class RecommendationAgentService {
      * recommendation compliance has already flagged.
      */
     private static final String SUMMARY_SYSTEM_PROMPT = """
-            You are the Recommendation Summary Agent in AIA Singapore's insurance
-            recommendation engine. Purpose: convert the technical pipeline results
+            You are the Suggestion Summary Agent in AIA Singapore's insurance
+            suggestion engine. Purpose: convert the technical pipeline results
             into an explanation the AIA agent can actually say to the customer —
-            generate an understandable recommendation, not a data dump.
+            generate an understandable suggestion, not a data dump.
 
             You are given the Compliance Check Agent's verdict. If compliant is
-            false, or any check failed, do NOT present the recommendation as a
+            false, or any check failed, do NOT present the suggestion as a
             done deal: soften the language, and add a talking point that names
             the specific compliance issue(s) and states it needs to be resolved
             before proceeding. If compliant is true, write a confident, plain
@@ -426,7 +427,7 @@ public class RecommendationAgentService {
             You may also be given "Conversation signals" (sentiment and
             buying-signal trend measured live during the call). Use them only to
             tune tone and pacing (e.g. reassure a hesitant customer, move faster
-            with an eager one) — never to change what is recommended.
+            with an eager one) — never to change what is suggested.
 
             Respond with ONLY a JSON object, no markdown fences, no commentary:
             {
@@ -493,7 +494,7 @@ public class RecommendationAgentService {
 
         md.append("## Executive Summary\n").append(summary.customerFacingSummary()).append("\n\n");
 
-        md.append("## Recommended Products\n");
+        md.append("## Suggested Products\n");
         List<String> recommended = shortlist.shortlistedProducts();
         if (recommended.isEmpty()) {
             md.append("No products were shortlisted for this customer.\n\n");
@@ -503,10 +504,10 @@ public class RecommendationAgentService {
                 ProductScore match = scoring.scores().stream()
                         .filter(s -> s.productName().equalsIgnoreCase(name)).findFirst().orElse(null);
                 md.append(i + 1).append(". **").append(name).append("**");
-                if (match != null) md.append(" — fit score ").append(match.score()).append("/100");
+                if (match != null) md.append(" — ").append(Wording.relevance(match.score()));
                 md.append("\n");
                 if (match != null) {
-                    for (String r : match.matchReasons()) md.append("   - Why it fits: ").append(r).append("\n");
+                    for (String r : match.matchReasons()) md.append("   - Why we suggest it: ").append(r).append("\n");
                     for (String c : match.concerns()) md.append("   - Consider: ").append(c).append("\n");
                 }
             }
@@ -520,9 +521,9 @@ public class RecommendationAgentService {
         md.append("**Affordability:** ").append(merged.affordability().estimatedBudgetBand())
                 .append(" (").append(merged.affordability().affordablePremiumRange()).append(")\n\n");
 
-        md.append("## Full Product Scoring\n");
+        md.append("## All Products Considered\n");
         for (ProductScore s : scoring.scores()) {
-            md.append("- **").append(s.productName()).append("** — ").append(s.score()).append("/100\n");
+            md.append("- **").append(s.productName()).append("** — ").append(Wording.relevance(s.score())).append("\n");
         }
         md.append("\n");
 
@@ -556,7 +557,7 @@ public class RecommendationAgentService {
         if (live != null && live.latest() != null && !live.latest().complianceFlags().isEmpty()) {
             md.append("\n## Advisor Conduct Flags (live monitoring — for review)\n");
             md.append("*Raised automatically during the conversation. Reported for advisor and compliance review; ")
-                    .append("they did not change the recommendation above.*\n\n");
+                    .append("they did not change the suggestion above.*\n\n");
             for (var f : live.latest().complianceFlags()) {
                 md.append("- **").append("high".equals(f.severity()) ? "High risk" : "Caution").append(":** “")
                         .append(f.statement()).append("” — ").append(f.advice()).append("\n");
@@ -596,7 +597,7 @@ public class RecommendationAgentService {
             {
               "title": "short proposal title addressed to the customer",
               "greeting": "1-2 warm sentences",
-              "summary": "3-4 sentences summarising what they told us and what we recommend",
+              "summary": "3-4 sentences summarising what they told us and what we suggest",
               "products": [
                 {"name": "exact product name", "whyItFits": "2-3 sentences",
                  "keyBenefits": ["2-4 short benefit points from the evidence"],
@@ -638,7 +639,7 @@ public class RecommendationAgentService {
             ProductScore score = scoreFor(scoring, name);
             products.append("\n### ").append(name);
             if (score != null) {
-                products.append(" (fit ").append(score.score()).append("/100)\n");
+                products.append(" (").append(Wording.relevance(score.score())).append(")\n");
                 products.append("Match reasons: ").append(listOrNone(score.matchReasons())).append("\n");
                 products.append("Concerns: ").append(listOrNone(score.concerns())).append("\n");
             } else {
@@ -654,7 +655,7 @@ public class RecommendationAgentService {
                 + "\nSituation analysis: " + merged.combinedNarrative()
                 + "\nProtection gaps: " + listOrNone(merged.needs().protectionGaps())
                 + "\nAdvisor talking points: " + listOrNone(summary.keyTalkingPoints())
-                + "\n\nShortlisted products (in recommendation order):" + products;
+                + "\n\nShortlisted products (in suggestion order):" + products;
 
         ProposalResult.Draft draft = call(PROPOSAL_SYSTEM_PROMPT.formatted(language), userMessage, ProposalResult.Draft.class);
 
@@ -705,7 +706,7 @@ public class RecommendationAgentService {
     private static final String STORY_SYSTEM_PROMPT = """
             You are the Sales Report agent for AIA Singapore. You prepare the warm, customer-facing "Goals and
             plan" page an advisor can talk through with a customer: what THEY told us matters to them, and how
-            the recommended products help with each of those things. Positive and respectful throughout —
+            the suggested products help with each of those things. Positive and respectful throughout —
             never a fear tactic, never pressure.
 
             Rules:
@@ -727,7 +728,7 @@ public class RecommendationAgentService {
               explore together with the advisor). "said" = the customer's exact words behind the goal, if any.
               Accuracy rules: a policy only protects the person it insures — never imply a product bought for the
               customer pays for, or helps with, a relative's health or care; for a concern about someone else,
-              say plainly there is no direct product in this recommendation and it is something to explore
+              say plainly there is no direct product in this suggestion and it is something to explore
               together (for example that person's own plan). Only include goals the customer actually shared —
               never add goals of your own.
               Describe what the product DOCUMENTS say it provides (for example "pays a lump sum on total and
@@ -775,7 +776,7 @@ public class RecommendationAgentService {
                     .append("; hopes: ").append(m.dreams().stream().map(CopilotInsights.Concern::label).toList())
                     .append("; concerns: ").append(m.worries().stream().map(CopilotInsights.Concern::label).toList());
         }
-        boolean debrief = "DEBRIEF".equals(profile.getCaptureMode());
+        boolean debrief = "DEBRIEF".equals(profile.getCaptureMode()) || "JUNO_DEBRIEF".equals(profile.getCaptureMode());
         String userMessage = "Customer profile:\n" + profileSummary(profile) + lifeMap
                 + (debrief ? "\nNOTE: the transcript below is the ADVISOR dictating a summary after the meeting, not the customer speaking." : "")
                 + "\nSituation analysis: " + merged.combinedNarrative()
@@ -859,7 +860,7 @@ public class RecommendationAgentService {
                 (for example a relative's health or care);
             (e) products that are not on the shortlist;
             (f) pressure, urgency or guilt.
-            Not problems: a goal that states plainly there is no direct product in this recommendation for another
+            Not problems: a goal that states plainly there is no direct product in this suggestion for another
             person and suggests exploring options with the advisor; and soft wording such as "can be part of how you
             plan for" or "may help" where the product's documented purpose (protection or savings) is relevant.
             Flag only claims that tie a benefit to a use, trigger, frequency or amount the evidence does not state.
@@ -932,6 +933,11 @@ public class RecommendationAgentService {
 
     // ── Shared LLM call helper ───────────────────────────────────────────────
 
+    /** The same retrying, timed-out JSON call the pipeline agents use, for other services (e.g. the advice pack). */
+    public <T> T callJson(String systemPrompt, String userMessage, Class<T> type) {
+        return call(systemPrompt, userMessage, type);
+    }
+
     private <T> T call(String systemPrompt, String userMessage, Class<T> type) {
         Exception lastError = null;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -949,7 +955,7 @@ public class RecommendationAgentService {
 
     private <T> T callOnce(String systemPrompt, String userMessage, Class<T> type) throws Exception {
         var future = llmExecutor.submit(() -> chatModel.call(new Prompt(
-                List.of(new SystemMessage(systemPrompt), new UserMessage(userMessage)),
+                List.of(new SystemMessage(systemPrompt + Wording.PROMPT_RULE), new UserMessage(userMessage)),
                 AzureOpenAiChatOptions.builder().responseFormat(JSON_FORMAT).build())));
 
         ChatResponse response;
