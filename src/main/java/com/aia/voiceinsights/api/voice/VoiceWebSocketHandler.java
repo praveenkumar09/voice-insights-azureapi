@@ -206,8 +206,31 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     }
 
     private void connectTranscriptionClient(WebSocketSession wsSession, VoiceSession vs) {
-        vs.transcriptionClient = new AzureOpenAiRealtimeTranscriptionClient(realtimeUrl, azureApiKey, transcriptionModel,
-                promptFor(vs, ""),
+        connectTranscriptionClient(wsSession, vs, null, 0);
+    }
+
+    /**
+     * Replaces a transcription connection that died or went silent. The new client takes over the audio the old one had not yet
+     * turned into text (and its settings), so nothing the advisor said while Azure was unreachable is lost.
+     */
+    private void replaceTranscriptionClient(WebSocketSession wsSession, VoiceSession vs) {
+        if (vs.intentionalClose || !wsSession.isOpen()) return;
+        if (vs.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            sendJsonQuiet(wsSession, Map.of("type", "error",
+                    "message", "Lost connection to the transcription service and could not reconnect."));
+            return;
+        }
+        AzureOpenAiRealtimeTranscriptionClient old = vs.transcriptionClient;
+        // The first attempt is immediate (a dropped socket is usually fine again at once); repeated failures back off.
+        long delaySeconds = vs.reconnectAttempts == 0 ? 0 : Math.min(vs.reconnectAttempts, 3);
+        vs.reconnectAttempts++;
+        connectTranscriptionClient(wsSession, vs, old, delaySeconds);
+    }
+
+    private void connectTranscriptionClient(WebSocketSession wsSession, VoiceSession vs, AzureOpenAiRealtimeTranscriptionClient old, long delaySeconds) {
+        final AzureOpenAiRealtimeTranscriptionClient[] self = new AzureOpenAiRealtimeTranscriptionClient[1];
+        vs.transcriptionClient = self[0] = new AzureOpenAiRealtimeTranscriptionClient(realtimeUrl, azureApiKey, transcriptionModel,
+                old != null && old.currentPrompt() != null ? old.currentPrompt() : promptFor(vs, ""),
                 new AzureOpenAiRealtimeTranscriptionClient.Listener() {
                     @Override
                     public void onPartialTranscript(String text) {
@@ -272,36 +295,39 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
 
                     @Override
                     public void onClose() {
-                        if (vs.intentionalClose || !wsSession.isOpen()) return;
+                        if (vs.transcriptionClient != self[0]) return; // already replaced
+                        replaceTranscriptionClient(wsSession, vs);
+                    }
 
-                        if (vs.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-                            sendJsonQuiet(wsSession, Map.of("type", "error",
-                                    "message", "Lost connection to the transcription service and could not reconnect."));
-                            return;
-                        }
-                        vs.reconnectAttempts++;
-                        // Backs off a little on repeated failures (network blip vs. a
-                        // session that just hit its natural expiry, which reconnects
-                        // cleanly on the first try) without ever going silent on the agent.
-                        long delaySeconds = Math.min(vs.reconnectAttempts, 3);
-                        reconnectScheduler.schedule(() -> connectTranscriptionClient(wsSession, vs),
-                                delaySeconds, TimeUnit.SECONDS);
+                    @Override
+                    public void onStalled() {
+                        if (vs.transcriptionClient != self[0]) return;
+                        replaceTranscriptionClient(wsSession, vs);
                     }
                 });
         // A debrief with Juno starts as a normal dictation (strict: little speech is never turned into words) and switches to
         // conversational timing only when the advisor hands over to Juno (see the "conversational" message).
         if ("JUNO".equals(vs.profile.getCaptureMode()) || "ASK".equals(vs.profile.getCaptureMode())) vs.transcriptionClient.setConversational(true);
+        if (old != null && old.isConversational()) vs.transcriptionClient.setConversational(true);
         // Dictating after a meeting is one person talking: sounds that stand alone, or are far quieter than they have been, are
         // the room, not them. (A live conversation has two voices at different distances, so it is judged more gently.)
         String mode = vs.profile.getCaptureMode();
         vs.transcriptionClient.setSingleSpeaker("DEBRIEF".equals(mode) || "JUNO_DEBRIEF".equals(mode));
         // A question for Juno ends when the advisor has been quiet for a moment; the server judges that (against their own
         // level) and tells the browser, which asks the question once its words have come back.
-        if ("ASK".equals(mode)) vs.transcriptionClient.setUtteranceEnd(850);
-        vs.transcriptionClient.connect().exceptionally(ex -> {
+        if ("ASK".equals(mode)) vs.transcriptionClient.setUtteranceEnd(1500);
+        if (old != null && old.utteranceEndMs() > 0) vs.transcriptionClient.setUtteranceEnd(old.utteranceEndMs());
+        if (old != null) { // hand over what the old connection never answered, then retire it so a late answer cannot duplicate it
+            vs.transcriptionClient.adopt(old.salvage(), old.lastFinalText());
+            old.retire();
+        }
+        Runnable open = () -> vs.transcriptionClient.connect().exceptionally(ex -> {
             sendJsonQuiet(wsSession, Map.of("type", "error", "message", "Failed to connect to Azure OpenAI realtime: " + ex.getMessage()));
+            if (vs.transcriptionClient == self[0]) replaceTranscriptionClient(wsSession, vs); // try again, keeping the audio
             return null;
         });
+        if (delaySeconds <= 0) open.run();
+        else reconnectScheduler.schedule(open, delaySeconds, TimeUnit.SECONDS);
     }
 
     @Override
@@ -322,6 +348,10 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         JsonNode node = mapper.readTree(message.getPayload());
         // "commit": the advisor paused dictating. Server-side VAD only finalizes at a pause in the audio, and a
         // paused browser sends none — so commit whatever has been heard, or the last sentence stays unfinished.
+        if ("turn_taken".equals(node.path("type").asText("")) && vs.transcriptionClient != null) {
+            vs.transcriptionClient.discardHeld();
+            return;
+        }
         if ("commit".equals(node.path("type").asText("")) && vs.transcriptionClient != null) {
             vs.transcriptionClient.commitAndNotify();
             return;
@@ -384,7 +414,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
 
         // Give Azure OpenAI a moment to flush the transcription.completed event for
         // the final (safety-flush) commit above.
-        if (vs.transcriptionClient != null) vs.transcriptionClient.awaitIdle(8000);
+        if (vs.transcriptionClient != null) vs.transcriptionClient.awaitIdle(25000); // long enough for a dead connection to be noticed and replaced
         else try { Thread.sleep(1500); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
 
         if ("ASK".equals(vs.profile.getCaptureMode())) { // nothing was kept: just end the session

@@ -698,3 +698,11 @@ The advisor asks, by voice or typing, what would change if a fact about the cust
 - **Storage** — table `juno_scenarios` (changes, status, result). REST: `GET/POST/DELETE /api/recommendations/{runId}/whatif[...]`. The ask stream carries extra events `scenario_proposal`, `scenario_started`, `scenario_cancelled`.
 - **UI** — `ScenarioCard` in the Ask panel (proposal, progress, before/after table); Juno speaks the summary when it lands. The Advice pack's Discussion tab and the PDF list the "What-ifs explored".
 - **Not built** — "this is actually true, update the profile" (the card only says to update it and re-run); Mandarin/Malay/Tamil summaries (English only).
+
+### 5.4 Not losing words when the speech connection misbehaves (phase 6)
+
+- **Dropped connection** — if Azure closes the transcription socket (code 1006) or stops answering, the replacement client inherits every segment that had not yet returned a transcript (plus what the segmenter was holding) and the previous client's settings (`salvage()` / `adopt()` / `retire()`); the first reconnect is immediate. A watchdog treats a segment with no transcript after ~9 s + 0.6 x its length as a dead connection. The old client ignores anything it says afterwards, so nothing is duplicated. "Finish" waits up to 25 s for this to complete.
+- **Long segments** — the speech model returns only the first sentence of a long segment that contains pauses (measured: 12 s in, 25 characters out). The forced-cut limit is therefore 9 s (was 20 s), at the quietest moment, with the existing 1 s overlap and repeat-trimming.
+- **Ask end-of-question** — 1.0 s of quiet (was 0.85 s); a line that ends on "and", "that", a comma etc. gets 1.6 s more, and if the advisor carries on it is not treated as the end.
+- **Test aid** — `VOICE_DEBUG_DROP_AFTER_SEGMENT=N` (docker-compose env, default 0 = off) silently kills the Azure connection once after the Nth segment.
+- **Known limit** — with a TV or other speech in the room, pauses are not quiet, so the server cannot see the end of a question (the browser's 4.5 s fallback applies) and the TV can be transcribed as the advisor.
