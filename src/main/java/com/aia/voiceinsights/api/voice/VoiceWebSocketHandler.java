@@ -431,7 +431,10 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         extractionService.extractInto(vs.profile, vs.transcript.toString(), vs.debrief, "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()));
         // Last live pass over the complete transcript, so the snapshot handed to the analysis
         // stage (and the live-vs-final comparison) is the best the live layer can produce.
-        analyseAndRecord(vs);
+        CopilotInsights finalInsights = analyseAndRecord(vs);
+        // The screen shows the last pass it was sent: send this one too, or anything this pass changed (for example Life Map ideas
+        // reworked after an existing-policies lookup) stays stale until the page is reloaded.
+        if (finalInsights != null) sendJsonQuiet(wsSession, Map.of("type", "copilot", "copilot", finalInsights));
         vs.profile.setRawTranscript(vs.transcript.toString());
         vs.profile.setStatus("FINALIZED");
         keepStoredCoverage(vs);

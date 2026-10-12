@@ -118,7 +118,7 @@ Format-checked only (`[STFGM]` + 7 digits + letter); no checksum yet.
 4. Juno debrief and LIVE copilot prompts *(done)*
 5. Readiness + advice-pack source *(done; the debrief review-screen panel is UI, step 7)*
 6. Juno suggestion source E + starter *(done; UI knows the new `coverage` source kind)*
-7. UI *(done)*: `ExistingCoverPanel` (NRIC field, consent, verified policies, mismatch note, unavailable state) shown in all three capture modes and hidden in customer-safe view; `existingCoverage` step in the pipeline (12 agents); `coverage` source in Juno suggestion
+7. UI *(done)*: `CoverCheck`, an inline control rather than a card of its own: a section of the Customer Profile card in live and debrief modes, and part of the "Existing cover" row on Juno's stage (typed NRIC, consent, verified tags, mismatch note, unavailable state); hidden in customer-safe view; `existingCoverage` step in the pipeline (12 agents); `coverage` source in Juno suggestion
 
 ## 10. Known gaps
 
