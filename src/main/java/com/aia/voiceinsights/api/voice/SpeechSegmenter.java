@@ -58,8 +58,9 @@ final class SpeechSegmenter {
     private static final int PAD_MS = 260;                   // silence appended to a flushed segment
     private static final int OVERLAP_MS = 1000;              // how far before a forced cut the next segment starts
 
+    private static final int PAUSE_MS = 450;                // a gap this long inside speech is a pause for thought
     private static final int MIN_TURN_MS = 2000;             // do not cut sooner than this
-    private static final int MAX_TURN_MS = 20000;            // past this, a forced cut at the quietest moment
+    private static final int MAX_TURN_MS = 9000;             // past this, a forced cut at the quietest moment (the speech model drops the tail of a long segment that holds pauses)
     private static final int LOOKBACK_MS = 4000;
     private static final int ISOLATED_MS = 3000;             // nothing voiced this long before = an isolated sound
     private static final int ISOLATED_MIN_MS = 700;          // voiced sound an isolated segment needs (single-speaker dictation)
@@ -108,6 +109,7 @@ final class SpeechSegmenter {
     private boolean carryOverlap;                                            // the next segment starts with audio already sent
 
     private long lastVoicedGlobal = -1;                                      // stream position of the latest voiced frame
+    private int cutsSinceEnd;                                                // pauses inside the utterance so far (each one cut a segment)
     private int voicedSinceEnd;                                              // voiced frames since the last end of an utterance
 
     private final List<String> notes = new ArrayList<>();
@@ -117,11 +119,19 @@ final class SpeechSegmenter {
      * {@code quietMs}: the end of a whole utterance, as opposed to a pause inside it. Judged like every pause here: against the
      * speaker, so a noisy room does not hide it and a soft word does not fake it.
      */
-    boolean utteranceEnded(int quietMs, int minVoicedMs) {
+    /** Whether the speaker has started talking again since the last {@link #utteranceEnded} (so that "end" was only a pause). */
+    boolean spokeSinceEnd() {
+        return voicedSinceEnd * FRAME_MS >= 200;
+    }
+
+    boolean utteranceEnded(int quietMs, int minVoicedMs, int extraAfterPauseMs, int clockGapMs) {
         if (voicedSinceEnd * FRAME_MS < minVoicedMs) return false;
-        long quiet = (receivedFrames - 1 - lastVoicedGlobal) * FRAME_MS;
-        if (quiet < quietMs) return false;
+        // The browser stops streaming during silence, so the quiet it has sent is only part of it: add the time since it last sent.
+        long quiet = (receivedFrames - 1 - lastVoicedGlobal) * FRAME_MS + clockGapMs;
+        // Someone who has already paused inside this utterance is a thinker: they get longer before it counts as finished.
+        if (quiet < quietMs + (cutsSinceEnd > 0 ? extraAfterPauseMs : 0)) return false;
         voicedSinceEnd = 0;
+        cutsSinceEnd = 0;
         return true;
     }
 
@@ -202,6 +212,9 @@ final class SpeechSegmenter {
             runLen++;
             int n = voiced.size();
             if (runLen == VOICED_RUN_FRAMES) {
+                // Speech resuming after a real gap, inside an utterance already under way, is a pause for thought.
+                long gapMs = (receivedFrames - VOICED_RUN_FRAMES - lastVoicedGlobal) * FRAME_MS;
+                if (voicedSinceEnd > 0 && lastVoicedGlobal >= 0 && gapMs >= PAUSE_MS) cutsSinceEnd++;
                 for (int k = n - VOICED_RUN_FRAMES; k < n; k++) voiced.set(k, true);
                 voicedSinceEnd += VOICED_RUN_FRAMES;
                 lastVoicedGlobal = receivedFrames - 1;

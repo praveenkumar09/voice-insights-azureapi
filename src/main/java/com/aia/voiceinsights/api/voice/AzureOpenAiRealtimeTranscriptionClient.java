@@ -48,6 +48,8 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         default void onUtteranceEnd() {}
         /** The transcription service has confirmed the session — audio sent from now on is certain to be heard. */
         default void onReady() {}
+        /** A segment has had no transcript for far longer than any healthy connection takes: the connection is probably dead. */
+        default void onStalled() {}
     }
 
     private final HttpClient httpClient = HttpClient.newHttpClient();
@@ -111,6 +113,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
                         outbox.clear();
                         this.connected = true;
                     }
+                    startWatchdog();
                 });
     }
 
@@ -149,10 +152,19 @@ public class AzureOpenAiRealtimeTranscriptionClient {
 
     /** {@code pcm16}: raw 24kHz, 16-bit mono PCM samples (see voice-insights-ui's useVoiceCapture hook). */
     public synchronized void sendAudioChunk(byte[] pcm16) {
+        lastChunkAt = System.currentTimeMillis();
         receivedMs += pcm16.length / 48; // 24kHz x 2 bytes = 48 bytes per millisecond
         for (SpeechSegmenter.Segment seg : segmenter.feed(pcm16)) transmit(seg, "cut");
         logNotes();
-        if (utteranceEndMs > 0 && segmenter.utteranceEnded(utteranceEndMs, 400)) {
+        checkEnd(0);
+    }
+
+    private volatile long lastChunkAt;
+    private static final int MIN_UTTERANCE_MS = 250;   // a one-word question ("Why?") is about this much speech
+
+    /** The browser sends nothing while the room is quiet, so the end of a question is also judged by the clock, not only by the audio received. */
+    private synchronized void checkEnd(int clockGapMs) {
+        if (utteranceEndMs > 0 && segmenter.utteranceEnded(utteranceEndMs, MIN_UTTERANCE_MS, PAUSER_EXTRA_MS, clockGapMs)) {
             final long detectedAt = System.currentTimeMillis();
             System.out.println("[voice-stt] end of question detected (" + utteranceEndMs + "ms of quiet) at " + detectedAt);
             commit(); // whatever of the utterance is still held goes out now
@@ -160,6 +172,23 @@ public class AzureOpenAiRealtimeTranscriptionClient {
             endNotifier.execute(() -> {
                 awaitIdle(5000);
                 try { Thread.sleep(60); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+                // A sentence that stops on "and", "that", a comma... is a pause in the middle of a thought, not a finished question:
+                // give the speaker a little longer to carry on, and if they do, this was not the end.
+                if (looksUnfinished(lastFinal)) {
+                    System.out.println("[voice-stt] \"" + lastFinal + "\" sounds unfinished; waiting a little longer");
+                    long until = System.currentTimeMillis() + UNFINISHED_EXTRA_MS;
+                    try {
+                        while (System.currentTimeMillis() < until) {
+                            boolean resumed;
+                            synchronized (this) { resumed = segmenter.spokeSinceEnd(); }
+                            if (resumed) {
+                                System.out.println("[voice-stt] the speaker carried on; not the end of the question");
+                                return;
+                            }
+                            Thread.sleep(100);
+                        }
+                    } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+                }
                 long now = System.currentTimeMillis();
                 System.out.println("[voice-stt] transcripts back " + (now - detectedAt) + "ms after the end was detected; telling the browser at " + now);
                 listener.onUtteranceEnd();
@@ -171,13 +200,17 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     //    audio is kept until the transcript arrives so that a failed segment is sent again instead of silently
     //    losing the words in it. ─────────────────────────────────────────────────────────────────────────────
     private static final int MAX_RETRIES = 2;
+    private static final java.util.concurrent.atomic.AtomicLong SEQ = new java.util.concurrent.atomic.AtomicLong();
 
     private static final class Pending {
         final List<byte[]> audio;
         final int attempts;
         final boolean overlap; // starts with audio already sent in the previous segment
         String itemId;
+        final long seq = SEQ.incrementAndGet();
+        final long sentAt = System.currentTimeMillis();
         Pending(List<byte[]> audio, int attempts, boolean overlap) { this.audio = audio; this.attempts = attempts; this.overlap = overlap; }
+        long audioMs() { long b = 0; for (byte[] a : audio) b += a.length; return b / 48; }
     }
 
     /** Audio appended since the last commit — the segment being spoken right now. */
@@ -203,13 +236,44 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     /** Audio received from the browser so far, in ms — the clock the diagnostic log lines are timed on. */
     private long receivedMs;
 
+    private volatile boolean conversational;
+    private volatile boolean singleSpeaker;
+
     public void setConversational(boolean on) {
+        conversational = on;
         segmenter.setConversational(on);
     }
 
+    public boolean isConversational() { return conversational; }
+    public boolean isSingleSpeaker() { return singleSpeaker; }
+    public int utteranceEndMs() { return utteranceEndMs; }
+    public String currentPrompt() { return prompt; }
+
     /** One person talking (an advisor dictating): sounds that stand alone, or are far quieter than they have been, are not them. */
     public void setSingleSpeaker(boolean on) {
+        singleSpeaker = on;
         segmenter.setSingleSpeaker(on);
+    }
+
+    private static final long UNFINISHED_EXTRA_MS = 1600;
+    private static final int PAUSER_EXTRA_MS = 800;   // extra quiet needed once the speaker has paused inside the utterance
+    private static final java.util.Set<String> DANGLING = java.util.Set.of("and", "but", "so", "because", "that", "which", "who", "if", "when", "while", "or", "the",
+            "a", "an", "to", "of", "with", "for", "in", "on", "at", "about", "from", "as",
+            "than", "then", "um", "uh", "er", "erm", "like", "also", "my", "his", "her", "their",
+            "our", "is", "are", "was", "were", "i", "he", "she", "they", "we", "it", "can",
+            "could", "should", "would", "will", "what", "why", "how", "whether", "since", "although", "has", "have",
+            "had", "not", "no", "any", "some", "more");
+
+    /** Whether a line ends where a sentence cannot: on a comma, a dash, or a word like "and" or "that". */
+    static boolean looksUnfinished(String line) {
+        if (line == null) return false;
+        String t = line.strip();
+        if (t.isEmpty() || t.endsWith("?")) return false;
+        if (t.endsWith(",") || t.endsWith("…") || t.endsWith("-") || t.endsWith("—") || t.endsWith(":") || t.endsWith(";")) return true;
+        String bare = t.replaceAll("[\\p{Punct}\\s]+$", "");
+        int sp = bare.lastIndexOf(' ');
+        String last = (sp < 0 ? bare : bare.substring(sp + 1)).toLowerCase(java.util.Locale.ROOT);
+        return DANGLING.contains(last);
     }
 
     private volatile int utteranceEndMs;
@@ -233,7 +297,23 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     /** Have the speaker's end of utterance detected here (after this much quiet) and reported to the listener. 0 turns it off. */
     public void setUtteranceEnd(int quietMs) {
         utteranceEndMs = quietMs;
+        if (quietMs > 0 && clockTimer == null) {
+            java.util.concurrent.ScheduledExecutorService t = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread th = new Thread(r, "voice-utterance-clock");
+                th.setDaemon(true);
+                return th;
+            });
+            clockTimer = t;
+            t.scheduleWithFixedDelay(() -> {
+                if (dead) return;
+                long last = lastChunkAt;
+                long gap = System.currentTimeMillis() - last;
+                if (last > 0 && gap > 150) checkEnd((int) Math.min(gap, 60_000));
+            }, 100, 100, java.util.concurrent.TimeUnit.MILLISECONDS);
+        }
     }
+
+    private volatile java.util.concurrent.ScheduledExecutorService clockTimer;
 
     private void logNotes() {
         for (String n : segmenter.drainNotes()) System.out.println("[voice-stt] " + n + " @" + receivedMs + "ms");
@@ -250,10 +330,21 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         else sendSegment(pieces, 0, seg.overlap());
     }
 
+    /** Testing only: VOICE_DEBUG_DROP_AFTER_SEGMENT=N silently kills the Azure connection once, right after the Nth segment is sent. */
+    private static final java.util.concurrent.atomic.AtomicInteger DEBUG_DROP_AFTER = new java.util.concurrent.atomic.AtomicInteger(
+            Integer.parseInt(System.getenv().getOrDefault("VOICE_DEBUG_DROP_AFTER_SEGMENT", "0").trim().isEmpty() ? "0" : System.getenv().getOrDefault("VOICE_DEBUG_DROP_AFTER_SEGMENT", "0").trim()));
+
     private void sendSegment(List<byte[]> pieces, int attempts, boolean overlap) {
         awaitingId.addLast(new Pending(pieces, attempts, overlap));
         for (byte[] p : pieces) send(Map.of("type", "input_audio_buffer.append", "audio", Base64.getEncoder().encodeToString(p)));
         send(Map.of("type", "input_audio_buffer.commit"));
+        if (DEBUG_DROP_AFTER.get() > 0 && DEBUG_DROP_AFTER.decrementAndGet() == 0) {
+            System.err.println("[voice-stt] DEBUG: dropping the Azure connection now (VOICE_DEBUG_DROP_AFTER_SEGMENT)");
+            WebSocket ws = webSocket;
+            if (ws != null) {
+                try { ws.abort(); } catch (Exception ignored) { /* already gone */ }
+            }
+        }
     }
 
     /**
@@ -269,6 +360,94 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         }
         transmit(seg, "flush");
     }
+
+    // ── When the connection to Azure dies (or goes silent) mid-session, the audio it had not yet answered is not lost: it is
+    //    handed to the replacement connection, oldest first. ─────────────────────────────────────────────────────
+
+    private volatile boolean dead;
+
+    /** Every piece of audio this connection has not yet turned into a transcript, oldest first, including what the segmenter still holds. */
+    public synchronized List<Object[]> salvage() {
+        List<Pending> open = new ArrayList<>(awaitingId);
+        open.addAll(byItem.values());
+        open.sort(java.util.Comparator.comparingLong(p -> p.seq));
+        List<Object[]> out = new ArrayList<>();
+        for (Pending p : open) out.add(new Object[] {p.audio, p.overlap});
+        for (Outgoing o : outbox) out.add(new Object[] {o.pieces(), o.overlap()});
+        outbox.clear();
+        awaitingId.clear();
+        byItem.clear();
+        SpeechSegmenter.Segment held = segmenter.flush();
+        if (held != null) {
+            List<byte[]> pieces = new ArrayList<>();
+            byte[] audio = held.audio();
+            for (int off = 0; off < audio.length; off += 48000) pieces.add(java.util.Arrays.copyOfRange(audio, off, Math.min(audio.length, off + 48000)));
+            out.add(new Object[] {pieces, held.overlap()});
+        }
+        return out;
+    }
+
+    /** Takes over audio salvaged from a dead connection; it is sent first, before anything cut after it. */
+    @SuppressWarnings("unchecked")
+    public synchronized void adopt(List<Object[]> items, String previousFinal) {
+        List<Outgoing> pre = new ArrayList<>();
+        for (Object[] it : items) pre.add(new Outgoing((List<byte[]>) it[0], (Boolean) it[1]));
+        outbox.addAll(0, pre);
+        if (previousFinal != null && lastFinal == null) lastFinal = previousFinal;
+        if (!items.isEmpty()) System.out.println("[voice-stt] carried " + items.size() + " unanswered segment(s) over to a new connection");
+    }
+
+    public String lastFinalText() { return lastFinal; }
+
+    /** A question has been handed over: speech heard since then belongs to no question and must not be glued onto the next one. */
+    public synchronized void discardHeld() {
+        SpeechSegmenter.Segment dropped = segmenter.flush();
+        if (dropped != null) System.out.println("[voice-stt] discarded " + dropped.speechMs() + "ms of speech heard after the question was handed over");
+    }
+
+    /** This connection has been replaced: ignore anything it still says and close it. */
+    public void retire() {
+        dead = true;
+        stopWatchdog();
+        if (clockTimer != null) clockTimer.shutdownNow();
+        WebSocket ws = webSocket;
+        if (ws != null) {
+            try { ws.abort(); } catch (Exception ignored) { /* already gone */ }
+        }
+    }
+
+    private volatile java.util.concurrent.ScheduledExecutorService watchdog;
+
+    private void startWatchdog() {
+        java.util.concurrent.ScheduledExecutorService w = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "voice-stt-watchdog");
+            t.setDaemon(true);
+            return t;
+        });
+        watchdog = w;
+        w.scheduleWithFixedDelay(() -> {
+            if (dead) return;
+            long now = System.currentTimeMillis();
+            boolean stalled = false;
+            synchronized (this) {
+                for (Pending p : awaitingId) if (now - p.sentAt > STALL_BASE_MS + (long) (p.audioMs() * 0.6)) stalled = true;
+                for (Pending p : byItem.values()) if (now - p.sentAt > STALL_BASE_MS + (long) (p.audioMs() * 0.6)) stalled = true;
+            }
+            if (stalled) {
+                System.err.println("[voice-stt] no transcript for a sent segment after a long wait; replacing the connection");
+                stopWatchdog();
+                listener.onStalled();
+            }
+        }, 1, 1, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    private void stopWatchdog() {
+        java.util.concurrent.ScheduledExecutorService w = watchdog;
+        if (w != null) w.shutdownNow();
+    }
+
+    /** A healthy transcript takes 1-4 s; this is well beyond that. Longer segments are allowed proportionally longer. */
+    private static final long STALL_BASE_MS = 9000;
 
     /**
      * Waits until every segment sent so far has come back as a transcript (or {@code timeoutMs} passes). A fixed short wait
@@ -290,6 +469,8 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     }
 
     public void close() {
+        stopWatchdog();
+        if (clockTimer != null) clockTimer.shutdownNow();
         WebSocket ws = webSocket;
         if (ws != null) ws.sendClose(WebSocket.NORMAL_CLOSURE, "done");
     }
@@ -324,6 +505,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     }
 
     private void handleEvent(String json) {
+        if (dead) return; // this connection was replaced: its audio was handed to the new one, so a late answer would be a duplicate
         try {
             JsonNode root = mapper.readTree(json);
             String type = root.path("type").asText("");
@@ -461,11 +643,13 @@ public class AzureOpenAiRealtimeTranscriptionClient {
 
         @Override
         public void onError(WebSocket webSocket, Throwable error) {
+            if (dead) return;
             listener.onError(error.getMessage());
         }
 
         @Override
         public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
+            if (dead) return null; // replaced on purpose
             if (statusCode != WebSocket.NORMAL_CLOSURE) {
                 System.err.println("[voice-stt] Azure closed the realtime socket: " + statusCode + " " + reason);
                 listener.onError("Azure closed the transcription connection: " + reason);
