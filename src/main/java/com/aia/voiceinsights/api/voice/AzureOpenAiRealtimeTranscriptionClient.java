@@ -46,6 +46,8 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         default void onDiscardedTranscript() {}
         /** The speaker finished an utterance (a pause long enough to be the end of a question): the text of it is on its way. */
         default void onUtteranceEnd() {}
+        /** The speaker started talking again shortly after an end of utterance was reported: it was only a pause. */
+        default void onSpeechResumed() {}
         /** The transcription service has confirmed the session — audio sent from now on is certain to be heard. */
         default void onReady() {}
         /** A segment has had no transcript for far longer than any healthy connection takes: the connection is probably dead. */
@@ -192,9 +194,25 @@ public class AzureOpenAiRealtimeTranscriptionClient {
                 long now = System.currentTimeMillis();
                 System.out.println("[voice-stt] transcripts back " + (now - detectedAt) + "ms after the end was detected; telling the browser at " + now);
                 listener.onUtteranceEnd();
+                // The end was a judgement about a pause. If they carry on shortly afterwards, say so, and the question can be withdrawn.
+                long until = System.currentTimeMillis() + RESUME_WATCH_MS;
+                try {
+                    while (System.currentTimeMillis() < until) {
+                        boolean resumed;
+                        synchronized (this) { resumed = segmenter.spokeSinceEnd(); }
+                        if (resumed) {
+                            System.out.println("[voice-stt] the speaker carried on after the end was reported");
+                            listener.onSpeechResumed();
+                            return;
+                        }
+                        Thread.sleep(100);
+                    }
+                } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             });
         }
     }
+
+    private static final long RESUME_WATCH_MS = 3000;
 
     // ── Segments awaiting a transcript. Azure occasionally reports "Input transcription failed" for an item; the
     //    audio is kept until the transcript arrives so that a failed segment is sent again instead of silently
@@ -268,7 +286,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     static boolean looksUnfinished(String line) {
         if (line == null) return false;
         String t = line.strip();
-        if (t.isEmpty() || t.endsWith("?")) return false;
+        if (t.isEmpty()) return false;
         if (t.endsWith(",") || t.endsWith("…") || t.endsWith("-") || t.endsWith("—") || t.endsWith(":") || t.endsWith(";")) return true;
         String bare = t.replaceAll("[\\p{Punct}\\s]+$", "");
         int sp = bare.lastIndexOf(' ');

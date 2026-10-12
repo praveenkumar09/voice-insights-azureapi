@@ -284,6 +284,11 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                     }
 
                     @Override
+                    public void onSpeechResumed() {
+                        sendJsonQuiet(wsSession, Map.of("type", "speech_resumed"));
+                    }
+
+                    @Override
                     public void onReady() {
                         sendJsonQuiet(wsSession, Map.of("type", "ready"));
                     }
@@ -315,7 +320,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         vs.transcriptionClient.setSingleSpeaker("DEBRIEF".equals(mode) || "JUNO_DEBRIEF".equals(mode));
         // A question for Juno ends when the advisor has been quiet for a moment; the server judges that (against their own
         // level) and tells the browser, which asks the question once its words have come back.
-        if ("ASK".equals(mode)) vs.transcriptionClient.setUtteranceEnd(1500);
+        if ("ASK".equals(mode)) vs.transcriptionClient.setUtteranceEnd(1100);
         if (old != null && old.utteranceEndMs() > 0) vs.transcriptionClient.setUtteranceEnd(old.utteranceEndMs());
         if (old != null) { // hand over what the old connection never answered, then retire it so a late answer cannot duplicate it
             vs.transcriptionClient.adopt(old.salvage(), old.lastFinalText());
