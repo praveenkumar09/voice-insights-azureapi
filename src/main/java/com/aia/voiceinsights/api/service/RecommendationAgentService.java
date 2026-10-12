@@ -915,20 +915,7 @@ public class RecommendationAgentService {
      * monthly when the text says annual. Null when nothing parseable was said.
      */
     static Integer monthlyIncomeFrom(String band) {
-        if (band == null || band.isBlank()) return null;
-        var m = java.util.regex.Pattern.compile("(\\d[\\d,]*(?:\\.\\d+)?)\\s*([kK])?").matcher(band);
-        List<Double> nums = new ArrayList<>();
-        while (m.find()) {
-            double v = Double.parseDouble(m.group(1).replace(",", ""));
-            if (m.group(2) != null) v *= 1000;
-            nums.add(v);
-        }
-        if (nums.isEmpty()) return null;
-        double mid = nums.stream().mapToDouble(Double::doubleValue).average().orElse(0);
-        boolean annual = band.toLowerCase().matches(".*(year|annual|p\\.a|pa\\b).*");
-        if (!annual && mid >= 30000) annual = true; // a bare figure this large is a yearly one
-        int monthly = (int) Math.round(annual ? mid / 12 : mid);
-        return monthly > 0 ? monthly : null;
+        return com.aia.voiceinsights.api.util.Calc.monthlyMidpoint(band);
     }
 
     // ── Shared LLM call helper ───────────────────────────────────────────────

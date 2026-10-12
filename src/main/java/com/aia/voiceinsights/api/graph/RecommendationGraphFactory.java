@@ -104,6 +104,15 @@ public class RecommendationGraphFactory {
     }
 
     public CompiledGraph<RecommendationState> build(String runId, CustomerProfile profile) throws GraphStateException {
+        return build(runId, profile, false);
+    }
+
+    /**
+     * {@code scenario}: a "what if" run over a scratch copy of the profile. It stops after the compliance check — the suggestion
+     * order, the reasons and the compliance verdict are all a comparison needs, and the customer-facing summary and report would
+     * only add minutes of waiting.
+     */
+    public CompiledGraph<RecommendationState> build(String runId, CustomerProfile profile, boolean scenario) throws GraphStateException {
         StateGraph<RecommendationState> graph = new StateGraph<>(RecommendationState::new);
 
         // Stage 1 — truly parallel: each branch runs on its own thread (see parallelExecutor).
@@ -118,9 +127,11 @@ public class RecommendationGraphFactory {
         graph.addNode("productScoring", AsyncNodeAction.node_async(state -> runProductScoring(runId, profile, state)));
         graph.addNode("productShortlist", AsyncNodeAction.node_async(state -> runProductShortlist(runId, state)));
         graph.addNode("ragValidation", AsyncNodeAction.node_async(state -> runRagValidation(runId, state)));
-        graph.addNode("summary", AsyncNodeAction.node_async(state -> runSummary(runId, profile, state)));
         graph.addNode("complianceCheck", AsyncNodeAction.node_async(state -> runComplianceCheck(runId, profile, state)));
-        graph.addNode("salesReport", AsyncNodeAction.node_async(state -> runSalesReport(runId, profile, state)));
+        if (!scenario) {
+            graph.addNode("summary", AsyncNodeAction.node_async(state -> runSummary(runId, profile, state)));
+            graph.addNode("salesReport", AsyncNodeAction.node_async(state -> runSalesReport(runId, profile, state)));
+        }
 
         graph.addEdge(StateGraph.START, "need");
         graph.addEdge(StateGraph.START, "risk");
@@ -133,9 +144,13 @@ public class RecommendationGraphFactory {
         graph.addEdge("productScoring", "productShortlist");
         graph.addEdge("productShortlist", "ragValidation");
         graph.addEdge("ragValidation", "complianceCheck");
-        graph.addEdge("complianceCheck", "summary");
-        graph.addEdge("summary", "salesReport");
-        graph.addEdge("salesReport", StateGraph.END);
+        if (scenario) {
+            graph.addEdge("complianceCheck", StateGraph.END);
+        } else {
+            graph.addEdge("complianceCheck", "summary");
+            graph.addEdge("summary", "salesReport");
+            graph.addEdge("salesReport", StateGraph.END);
+        }
 
         return graph.compile();
     }

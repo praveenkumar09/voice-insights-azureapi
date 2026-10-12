@@ -186,7 +186,7 @@ public class RecommendationStore {
         Map<String, Double> out = new HashMap<>();
         jdbc.query("""
                 SELECT run_id, EXTRACT(EPOCH FROM (completed_at - started_at))
-                FROM %s.recommendation_runs WHERE status = 'COMPLETED' AND completed_at IS NOT NULL
+                FROM %s.recommendation_runs WHERE status = 'COMPLETED' AND completed_at IS NOT NULL AND customer_profile_id NOT LIKE 'whatif:%%'
                 """.formatted(schema), rs -> { out.put(rs.getString(1), rs.getDouble(2)); });
         return out;
     }
@@ -196,7 +196,7 @@ public class RecommendationStore {
         Map<String, String> out = new LinkedHashMap<>();
         jdbc.query("""
                 SELECT DISTINCT ON (customer_profile_id) customer_profile_id, run_id
-                FROM %s.recommendation_runs WHERE status = 'COMPLETED'
+                FROM %s.recommendation_runs WHERE status = 'COMPLETED' AND customer_profile_id NOT LIKE 'whatif:%%'
                 ORDER BY customer_profile_id, started_at DESC
                 """.formatted(schema), rs -> { out.put(rs.getString(1), rs.getString(2)); });
         return out;

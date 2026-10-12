@@ -1,5 +1,6 @@
 package com.aia.voiceinsights.api.service;
 
+import com.aia.voiceinsights.api.util.Calc;
 import com.aia.voiceinsights.api.model.CustomerProfile;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -41,9 +42,11 @@ public class ProfileExtractionService {
             The profile describes ONE person: the main customer (the person being advised, e.g. the one named "Mr Lim").
             Facts about anyone else (spouse, wife, husband, children, parents, friends) must NEVER go into customerName,
             age, occupation, incomeBand or existingPolicies. For example, "his wife is a housewife" or "she is 38" is about the
-            wife, so the customer's occupation and age stay null unless stated about the customer himself or herself. Count
-            such people in "dependents" where they depend on the customer, and record their details (spouse's job, age,
-            cover) in "notes" instead, saying whose they are. A pronoun like "she" or "他太太" refers to the person last
+            wife, so the customer's occupation and age stay null unless stated about the customer himself or herself. List
+            each person who depends on the customer in "dependantsList" (one entry per person, even when unnamed: "wife",
+            "son Ethan (8)", "child", "father (supported financially)"; two unnamed children are two entries). Do NOT count them
+            yourself: the system counts the list. Record other details of such people (spouse's job, age, cover) in "notes",
+            saying whose they are. A pronoun like "she" or "他太太" refers to the person last
             named: check who it refers to before assigning a fact. Pronoun gender matters: if the customer is "Mr", "he"
             or "他", then a fact about "she", "her" or "她" is about someone else (usually the wife), and the reverse for a
             female customer. Speech recognition often turns "太太是" into "她是/她还是", so treat "她..." about a male customer
@@ -55,7 +58,8 @@ public class ProfileExtractionService {
               "age": integer or null,
               "occupation": string or null,
               "incomeBand": string or null,
-              "dependents": integer or null,
+              "dependantsList": [string],
+              "dependents": null,
               "existingPolicies": [string],
               "goalsAndConcerns": [string],
               "budgetNotes": string or null,
@@ -114,8 +118,14 @@ public class ProfileExtractionService {
             applyIfPresent(root, "customerName", profile::setCustomerName);
             if (root.hasNonNull("age")) profile.setAge(root.get("age").asInt());
             applyIfPresent(root, "occupation", profile::setOccupation);
-            applyIfPresent(root, "incomeBand", profile::setIncomeBand);
-            if (root.hasNonNull("dependents")) profile.setDependents(root.get("dependents").asInt());
+            applyIfPresent(root, "incomeBand", v -> profile.setIncomeBand(normaliseMoney(v)));
+            List<String> dependants = toList(root.path("dependantsList"));
+            if (!dependants.isEmpty()) {
+                profile.setDependantsList(dependants);
+                profile.setDependents(dependants.size());   // counted here, in code
+            } else if (root.hasNonNull("dependents")) {
+                profile.setDependents(root.get("dependents").asInt());
+            }
             profile.setExistingPolicies(toList(root.path("existingPolicies")));
             profile.setGoalsAndConcerns(toList(root.path("goalsAndConcerns")));
             applyIfPresent(root, "budgetNotes", profile::setBudgetNotes);
@@ -125,6 +135,11 @@ public class ProfileExtractionService {
             // a silent catch here previously hid a real bug with no trace at all.
             System.err.println("ProfileExtractionService: extraction failed: " + e);
         }
+    }
+
+    /** Income is kept in one style ("About $8,000/month", "$6,000-8,000/month") whatever way it was said: words, k, per year... */
+    static String normaliseMoney(String said) {
+        return Calc.parseMoney(said).map(Calc::format).orElse(said);
     }
 
     private void applyIfPresent(JsonNode root, String field, Consumer<String> setter) {

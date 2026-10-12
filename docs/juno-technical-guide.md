@@ -686,3 +686,33 @@ Being upfront about limits builds trust.
 **Guardrails in the prompt.** Juno cannot change, reorder or drop the suggestions and never pretends to; it says so, says what the advisor's alternative would leave uncovered, and that new facts mean updating the profile and running the analysis again. It never names a product, product type or approach that is not in the sources, never calls a product suitable/right/best, never promises approval, returns or guarantees, refuses prompt injection, and steers off-topic questions back. It answers in the language the advisor used (English, Mandarin, Malay, Tamil).
 
 **Diagnostics.** `[voice-stt]` lines for the listening side; `Juno ask …: first sentence Nms after the question (context, document search, first words from the model)` for the answering side.
+
+### 7.x "What if…?" (phase 6)
+
+The advisor asks, by voice or typing, what would change if a fact about the customer were different ("what if he had one more child?"). Juno does not guess a new list; the real analysis is re-run on a scratch copy of the profile.
+
+- **Detecting it** — `ScenarioService.handle` runs before the normal Ask path. A what-if pattern (English, Mandarin, Malay) triggers a JSON call that turns the sentence into a change list (`age`, `dependents`, `occupation`, `incomeBand`, `budgetNotes`, `existingPolicies`, `goalsAndConcerns`, `notes`). Requests about products ("drop Secure Guard") are not what-ifs and fall through to the normal answer ("I can't change what the analysis concluded"). Vague ones ("richer") get one question back. Values are range-checked in code; notes already in the file are dropped.
+- **Confirming** — the change list is read back and kept as a pending proposal for 10 minutes. A short yes ("yes", "go ahead") starts it; a short no drops it; the card also has Run it / Not now buttons. Up to 6 scenarios per run.
+- **Running** — `RecommendationGraphFactory.build(runId, profile, true)` runs the same graph but stops after the compliance check (no summary or sales report), on a run whose profile id is `whatif:<scenarioId>`, so it never appears in admin lists or analytics (`RecommendationStore` filters it). Takes about 20-40 s. The advice pack is not generated for it.
+- **Comparing** — original vs scenario shortlist order and relevance wording per product (NEW / DROPPED / UP / DOWN / SAME), compliance verdict before and after, and an LLM-written spoken summary and one "why" per moved product, built only from the two runs' reasons.
+- **Storage** — table `juno_scenarios` (changes, status, result). REST: `GET/POST/DELETE /api/recommendations/{runId}/whatif[...]`. The ask stream carries extra events `scenario_proposal`, `scenario_started`, `scenario_cancelled`.
+- **UI** — `ScenarioCard` in the Ask panel (proposal, progress, before/after table); Juno speaks the summary when it lands. The Advice pack's Discussion tab and the PDF list the "What-ifs explored".
+- **Not built** — "this is actually true, update the profile" (the card only says to update it and re-run); Mandarin/Malay/Tamil summaries (English only).
+
+### 5.4 Not losing words when the speech connection misbehaves (phase 6)
+
+- **Dropped connection** — if Azure closes the transcription socket (code 1006) or stops answering, the replacement client inherits every segment that had not yet returned a transcript (plus what the segmenter was holding) and the previous client's settings (`salvage()` / `adopt()` / `retire()`); the first reconnect is immediate. A watchdog treats a segment with no transcript after ~9 s + 0.6 x its length as a dead connection. The old client ignores anything it says afterwards, so nothing is duplicated. "Finish" waits up to 25 s for this to complete.
+- **Long segments** — the speech model returns only the first sentence of a long segment that contains pauses (measured: 12 s in, 25 characters out). The forced-cut limit is therefore 9 s (was 20 s), at the quietest moment, with the existing 1 s overlap and repeat-trimming.
+- **Ask end-of-question** — 1.0 s of quiet (was 0.85 s); a line that ends on "and", "that", a comma etc. gets 1.6 s more, and if the advisor carries on it is not treated as the end.
+- **Test aid** — `VOICE_DEBUG_DROP_AFTER_SEGMENT=N` (docker-compose env, default 0 = off) silently kills the Azure connection once after the Nth segment.
+- **Known limit** — with a TV or other speech in the room, pauses are not quiet, so the server cannot see the end of a question (the browser's 4.5 s fallback applies) and the TV can be transcribed as the advisor.
+
+### 7.y Maths belongs to code, not the model (phase 6)
+
+`util/Calc.java` does every sum Juno relies on, with exact decimals, and returns the working beside the answer (`CalcTest`, 11 tests). The model reads facts and states *what* is wanted; it never does arithmetic.
+
+- **Operations:** read numbers ("6,000-8,000", "80k", "forty one"), parse income/budget text with its period, monthly/yearly conversion, scale ("half"), percent change ("drops 30%"), signed shifts for counts and ages, head-count totals when children change, share of income, percent-of, and one display style ("About $8,000/month").
+- **What-if (`ScenarioService`):** the model returns ops `scale | percent | shift | set` and, for children, only `value` (children after) and `childrenNow`; `Calc` computes the new figures. A change that changes nothing is dropped and Juno says "that is already how it is". The working shows under each change on the card and is stored with the scenario. When the profile has a dependants list, the number of children is counted from it in code.
+- **Debrief extraction (`ProfileExtractionService`):** the model lists each dependant as an entry (`dependantsList`), the code counts them into `dependents`; income is normalised to one style. `RecommendationAgentService.monthlyIncomeFrom` now calls `Calc`.
+- **Asking Juno (`JunoAskService`):** before she answers, the server adds calculated sources (kind `calc`, chip "Calculated"): income per month and per year, the affordable premium range as a share of income, and sums asked for outright ("30% of his income", "half his income"). The prompt forbids arithmetic, unit conversion and rounding. Every sentence is then checked: any figure that is in neither the sources nor the question (counts up to 12 and years excepted) marks the sentence with the dotted "unsourced" underline ("includes a figure not in the file"), and the server logs it. `FiguresTest`, 4 tests.
+- **Tests:** `mvn test` (JUnit 5.10.0 declared explicitly in the pom because the BOM-managed aggregate is not in the offline repository).
