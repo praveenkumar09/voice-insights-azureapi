@@ -121,6 +121,7 @@ public class JunoAskService {
     private final CustomerProfileStore profileStore;
     private final ProductVectorSearchService productSearch;
     private final JunoAskStore store;
+    private final ScenarioService scenarios;
     private final ChatModel chatModel;
     private final ObjectMapper mapper = new ObjectMapper();
     private final Map<String, Context> cache = new ConcurrentHashMap<>();
@@ -131,7 +132,8 @@ public class JunoAskService {
     });
 
     public JunoAskService(RecommendationStore runStore, CustomerProfileStore profileStore, ProductVectorSearchService productSearch,
-                          JunoAskStore store, @Qualifier("azureOpenAiChatModel") ChatModel chatModel) {
+                          JunoAskStore store, ScenarioService scenarios, @Qualifier("azureOpenAiChatModel") ChatModel chatModel) {
+        this.scenarios = scenarios;
         this.runStore = runStore;
         this.profileStore = profileStore;
         this.productSearch = productSearch;
@@ -294,6 +296,7 @@ public class JunoAskService {
         out.add(new Starter("What drove this", "What did " + who + " say that drove these suggestions?"));
         boolean flagged = c.sources().values().stream().anyMatch(s -> "compliance".equals(s.kind()) && (s.text().contains("NOT passed") || s.text().startsWith("Issue")));
         out.add(new Starter(flagged ? "What compliance flagged" : "Anything to watch?", flagged ? "What did compliance flag, and how should I handle it?" : "Is there anything here I should be careful about before I take this to " + who + "?"));
+        out.add(new Starter("What if…?", "What if " + who + " had one more dependant?"));
         out.add(new Starter("What could change it", "What is missing from the picture that could change these suggestions?"));
         return out;
     }
@@ -325,6 +328,19 @@ public class JunoAskService {
             long t0 = System.currentTimeMillis();
             Schedulers.boundedElastic().schedule(() -> {
                 try {
+                    Optional<ScenarioService.Reply> whatIf = scenarios.handle(runId, question);
+                    if (whatIf.isPresent()) {
+                        for (String line : whatIf.get().sentences()) {
+                            if (answer.length() > 0) answer.append(' ');
+                            answer.append(line);
+                            sink.next(json(Map.of("type", "sentence", "text", line, "sources", List.of())));
+                        }
+                        for (Map<String, Object> ev : whatIf.get().events()) sink.next(json(ev));
+                        int turn = finished.compareAndSet(false, true) ? saveTurn(runId, question, answer, used) : 0;
+                        sink.next(json(Map.of("type", "done", "turn", turn)));
+                        sink.complete();
+                        return;
+                    }
                     Context ctx = context(runId);
                     long tContext = System.currentTimeMillis();
                     Map<String, Source> all = new LinkedHashMap<>(ctx.sources());

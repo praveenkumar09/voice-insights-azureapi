@@ -686,3 +686,15 @@ Being upfront about limits builds trust.
 **Guardrails in the prompt.** Juno cannot change, reorder or drop the suggestions and never pretends to; it says so, says what the advisor's alternative would leave uncovered, and that new facts mean updating the profile and running the analysis again. It never names a product, product type or approach that is not in the sources, never calls a product suitable/right/best, never promises approval, returns or guarantees, refuses prompt injection, and steers off-topic questions back. It answers in the language the advisor used (English, Mandarin, Malay, Tamil).
 
 **Diagnostics.** `[voice-stt]` lines for the listening side; `Juno ask …: first sentence Nms after the question (context, document search, first words from the model)` for the answering side.
+
+### 7.x "What if…?" (phase 6)
+
+The advisor asks, by voice or typing, what would change if a fact about the customer were different ("what if he had one more child?"). Juno does not guess a new list; the real analysis is re-run on a scratch copy of the profile.
+
+- **Detecting it** — `ScenarioService.handle` runs before the normal Ask path. A what-if pattern (English, Mandarin, Malay) triggers a JSON call that turns the sentence into a change list (`age`, `dependents`, `occupation`, `incomeBand`, `budgetNotes`, `existingPolicies`, `goalsAndConcerns`, `notes`). Requests about products ("drop Secure Guard") are not what-ifs and fall through to the normal answer ("I can't change what the analysis concluded"). Vague ones ("richer") get one question back. Values are range-checked in code; notes already in the file are dropped.
+- **Confirming** — the change list is read back and kept as a pending proposal for 10 minutes. A short yes ("yes", "go ahead") starts it; a short no drops it; the card also has Run it / Not now buttons. Up to 6 scenarios per run.
+- **Running** — `RecommendationGraphFactory.build(runId, profile, true)` runs the same graph but stops after the compliance check (no summary or sales report), on a run whose profile id is `whatif:<scenarioId>`, so it never appears in admin lists or analytics (`RecommendationStore` filters it). Takes about 20-40 s. The advice pack is not generated for it.
+- **Comparing** — original vs scenario shortlist order and relevance wording per product (NEW / DROPPED / UP / DOWN / SAME), compliance verdict before and after, and an LLM-written spoken summary and one "why" per moved product, built only from the two runs' reasons.
+- **Storage** — table `juno_scenarios` (changes, status, result). REST: `GET/POST/DELETE /api/recommendations/{runId}/whatif[...]`. The ask stream carries extra events `scenario_proposal`, `scenario_started`, `scenario_cancelled`.
+- **UI** — `ScenarioCard` in the Ask panel (proposal, progress, before/after table); Juno speaks the summary when it lands. The Advice pack's Discussion tab and the PDF list the "What-ifs explored".
+- **Not built** — "this is actually true, update the profile" (the card only says to update it and re-run); Mandarin/Malay/Tamil summaries (English only).
