@@ -34,6 +34,9 @@ public class CustomerProfile {
 
     private String rawTranscript;
 
+    /** Set server-side by the coverage lookup only — never trusted from a client write (see CustomerController). */
+    private CoverageSnapshot coverage;
+
     /** Set server-side by the voice session only — never trusted from a client write (see CustomerController). */
     private LiveInsightsSnapshot liveInsights;
 
@@ -81,6 +84,9 @@ public class CustomerProfile {
 
     public String getCaptureMode() { return captureMode; }
     public void setCaptureMode(String captureMode) { this.captureMode = captureMode; }
+
+    public CoverageSnapshot getCoverage() { return coverage; }
+    public void setCoverage(CoverageSnapshot coverage) { this.coverage = coverage; }
 
     public String getRawTranscript() { return rawTranscript; }
     public LiveInsightsSnapshot getLiveInsights() { return liveInsights; }

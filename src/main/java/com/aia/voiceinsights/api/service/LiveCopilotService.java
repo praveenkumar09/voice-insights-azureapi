@@ -2,6 +2,7 @@ package com.aia.voiceinsights.api.service;
 
 import com.aia.voiceinsights.api.model.CopilotInsights;
 import com.aia.voiceinsights.api.model.CopilotInsights.*;
+import com.aia.voiceinsights.api.model.CoverageSnapshot;
 import com.aia.voiceinsights.api.model.CustomerProfile;
 import com.aia.voiceinsights.api.model.ProductChunkMatch;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -198,6 +199,8 @@ public class LiveCopilotService {
         private List<String> currentQuestions = List.of();
         private final Map<String, Double> fitByProduct = new LinkedHashMap<>();
         private LifeMap lifeMap = new LifeMap(List.of(), List.of(), List.of());
+        /** What the customer already holds, so no protection idea names a product they own. */
+        private CoverageSnapshot coverage;
     }
 
     // Exponential smoothing weights (share given to the NEW reading). Sentiment reacts fastest,
@@ -220,6 +223,8 @@ public class LiveCopilotService {
 
     public CopilotInsights analyse(CustomerProfile profile, String transcript, State state) {
         if (transcript == null || transcript.isBlank()) return null;
+        state.coverage = profile.getCoverage();
+        state.lifeMap = withoutHeldIdeas(state.lifeMap, state.coverage); // ideas made before the lookup may name a held product
         try {
             String tail = transcript.length() > MAX_TRANSCRIPT_CHARS
                     ? transcript.substring(transcript.length() - MAX_TRANSCRIPT_CHARS) : transcript;
@@ -322,6 +327,7 @@ public class LiveCopilotService {
         if (p.getIncomeBand() != null) facts.put("incomeBand", p.getIncomeBand());
         if (p.getDependents() != null) facts.put("dependents", p.getDependents());
         if (p.getExistingPolicies() != null && !p.getExistingPolicies().isEmpty()) facts.put("existingPolicies", p.getExistingPolicies());
+        if (p.getCoverage() != null && p.getCoverage().verified()) facts.put("verifiedExistingPolicies", CoverageSnapshot.describe(p.getCoverage()));
         if (p.getGoalsAndConcerns() != null && !p.getGoalsAndConcerns().isEmpty()) facts.put("goalsAndConcerns", p.getGoalsAndConcerns());
         if (p.getBudgetNotes() != null) facts.put("budget", p.getBudgetNotes());
         return facts.isEmpty() ? "none yet" : facts.toString();
@@ -409,13 +415,13 @@ public class LiveCopilotService {
             people.removeIf(o -> o.name() == null && GENERIC_CHILD.contains(o.relation().toLowerCase()));
         }
 
-        List<Concern> dreams = mergeConcerns(prev.dreams(), draft.dreams(), haystack);
-        List<Concern> worries = mergeConcerns(prev.worries(), draft.worries(), haystack);
+        List<Concern> dreams = mergeConcerns(prev.dreams(), draft.dreams(), haystack, state.coverage);
+        List<Concern> worries = mergeConcerns(prev.worries(), draft.worries(), haystack, state.coverage);
         state.lifeMap = new LifeMap(List.copyOf(people), dreams, worries);
         return state.lifeMap;
     }
 
-    private List<Concern> mergeConcerns(List<Concern> prev, List<DraftConcern> proposed, String haystack) {
+    private List<Concern> mergeConcerns(List<Concern> prev, List<DraftConcern> proposed, String haystack, CoverageSnapshot held) {
         List<Concern> out = new ArrayList<>(prev);
         if (proposed == null) return out;
         for (DraftConcern d : proposed) {
@@ -424,29 +430,45 @@ public class LiveCopilotService {
             if (out.stream().anyMatch(o -> similar(o.label(), d.label()))) continue;
             String quote = shownQuote(d.said(), d.saidEn());
             out.add(new Concern(d.label().trim(), d.forRelation() == null || d.forRelation().isBlank() || nonLatin(d.forRelation()) ? "Self" : d.forRelation().trim(),
-                    quote, ideaFor("Insurance protection for: " + d.label() + ". " + quote)));
+                    quote, ideaFor("Insurance protection for: " + d.label() + ". " + quote, held)));
         }
         return out;
     }
 
     /** Fills in the protection idea for any dream or worry that does not have one yet (used after advisor edits). */
-    public LifeMap enrichLifeMap(LifeMap m) {
-        return new LifeMap(m.people(), enrichAll(m.dreams()), enrichAll(m.worries()));
+    public LifeMap enrichLifeMap(LifeMap m, CoverageSnapshot held) {
+        return withoutHeldIdeas(new LifeMap(m.people(), enrichAll(m.dreams(), held), enrichAll(m.worries(), held)), held);
     }
 
-    private List<Concern> enrichAll(List<Concern> in) {
+    private List<Concern> enrichAll(List<Concern> in, CoverageSnapshot held) {
         List<Concern> out = new ArrayList<>();
         for (Concern c : in) {
             out.add(c.idea() != null ? c : new Concern(c.label(), c.forRelation(), c.said(),
-                    ideaFor("Insurance protection for: " + c.label())));
+                    ideaFor("Insurance protection for: " + c.label(), held)));
+        }
+        return out;
+    }
+
+    /** Re-works any protection idea that names a product the customer already holds. */
+    private LifeMap withoutHeldIdeas(LifeMap m, CoverageSnapshot held) {
+        if (held == null || m == null) return m;
+        return new LifeMap(m.people(), reidea(m.dreams(), held), reidea(m.worries(), held));
+    }
+
+    private List<Concern> reidea(List<Concern> in, CoverageSnapshot held) {
+        List<Concern> out = new ArrayList<>();
+        for (Concern c : in) {
+            out.add(c.idea() != null && held.holds(c.idea().product())
+                    ? new Concern(c.label(), c.forRelation(), c.said(), ideaFor("Insurance protection for: " + c.label(), held)) : c);
         }
         return out;
     }
 
     /** Best catalogue match for one concern, or null when nothing fits well enough — never a forced match. */
-    private ProtectionIdea ideaFor(String query) {
+    private ProtectionIdea ideaFor(String query, CoverageSnapshot held) {
         try {
             for (ProductChunkMatch m : productSearch.search(query)) {
+                if (held != null && held.holds(m.productName())) continue; // already owned: never an idea
                 double fit = Math.max(1, Math.min(99, (m.similarity() - 0.15) / 0.45 * 100));
                 if (fit >= IDEA_MIN_FIT) return new ProtectionIdea(m.productName(), (int) Math.round(fit), excerpt(m.content()));
                 return null; // results are ordered by similarity: if the best is too weak, none qualifies
@@ -585,6 +607,8 @@ public class LiveCopilotService {
             List<ProductMatch> out = new ArrayList<>();
             for (ProductChunkMatch m : best.values()) {
                 if (out.size() == MAX_PRODUCTS) break;
+                // Never show a fit score for something the customer already owns.
+                if (profile.getCoverage() != null && profile.getCoverage().holds(m.productName())) continue;
                 // Raw cosine similarity for short need-phrases against long document chunks sits
                 // roughly in 0.3-0.6 — stretch that band into a readable 0-100 fit.
                 double raw = Math.max(1, Math.min(99, (m.similarity() - 0.15) / 0.45 * 100));

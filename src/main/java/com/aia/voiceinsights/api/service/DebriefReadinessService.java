@@ -128,7 +128,7 @@ public class DebriefReadinessService {
                 if (notBlank(p.getIncomeBand())) have.add("income");
                 if (notBlank(p.getBudgetNotes())) have.add("budget");
                 if (p.getDependents() != null) have.add("dependants");
-                if (p.getExistingPolicies() != null && !p.getExistingPolicies().isEmpty()) have.add("existingPolicies");
+                if ((p.getExistingPolicies() != null && !p.getExistingPolicies().isEmpty()) || (p.getCoverage() != null && p.getCoverage().verified())) have.add("existingPolicies");
                 if (p.getGoalsAndConcerns() != null && !p.getGoalsAndConcerns().isEmpty()) have.add("goals");
                 var snap = p.getLiveInsights();
                 CopilotInsights latest = snap == null ? null : snap.latest();

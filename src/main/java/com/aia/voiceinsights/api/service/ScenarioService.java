@@ -437,6 +437,7 @@ public class ScenarioService {
         p.setCaptureMode(real.getCaptureMode());
         p.setRawTranscript(real.getRawTranscript());
         p.setLiveInsights(real.getLiveInsights());
+        p.setCoverage(real.getCoverage());
         for (Change c : changes) {
             switch (c.field()) {
                 case "age" -> p.setAge(Integer.valueOf(c.value()));

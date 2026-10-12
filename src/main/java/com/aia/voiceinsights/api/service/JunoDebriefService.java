@@ -1,6 +1,7 @@
 package com.aia.voiceinsights.api.service;
 
 import com.aia.voiceinsights.api.model.CopilotInsights;
+import com.aia.voiceinsights.api.model.CoverageSnapshot;
 import com.aia.voiceinsights.api.model.CustomerProfile;
 import com.aia.voiceinsights.api.model.ProductChunkMatch;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -121,6 +122,11 @@ public class JunoDebriefService {
               Use it only to choose WHICH missing fact matters most (for example health history or smoking status for a life or
               critical illness plan). You may name the product in a few words ("Secure Guard Term looks at health history").
               Never suggest or recommend a product, never say it suits the customer, never state figures or prices.
+            - VERIFIED EXISTING POLICIES comes from the insurer's policy system. When it says "None (confirmed...)" or lists
+              policies, the customer's existing cover is KNOWN: never ask whether they have existing insurance. If it lists a
+              policy the dictation never mentioned, ask the advisor ONCE whether the customer mentioned it (for example "The
+              system shows a term plan. Did he mention it?"), naming the kind of cover only, never policy numbers or amounts.
+              When it says "Not checked", ask about existing cover as usual. Never mention an NRIC or ID number.
             - Never invent facts. Never give product advice, prices, suggestions or recommendations. Never speak as the customer.
             - You are talking with the ADVISOR about the customer, never with the customer. Refer to the customer in the
               third person ("Marcus", "he", "the customer") only when asking ABOUT them; the advisor is "you". Never use a
@@ -258,6 +264,7 @@ public class JunoDebriefService {
                 .append(String.join(", ", readiness.missing().stream().limit(3).toList())).append("\n");
         else u.append("FACT-FIND READINESS (estimate): ").append(readiness.captured()).append(" of ").append(readiness.total())
                 .append(" captured. STILL MISSING, most valuable first: ").append(String.join(", ", readiness.missing().stream().limit(8).toList())).append("\n");
+        u.append("VERIFIED EXISTING POLICIES: ").append(profile == null ? "Not checked" : CoverageSnapshot.describe(profile.getCoverage())).append("\n");
         u.append("COMPLIANCE FLAGS: ").append(complianceFlags(profile)).append("\n");
         u.append("PRODUCT NEEDS:\n").append(productNeeds(req.profileId(), profile, req.dictation())).append("\n");
         String dictation = req.dictation() == null ? "" : req.dictation().strip();
@@ -323,7 +330,11 @@ public class JunoDebriefService {
             if (q.isEmpty() && dictation != null) q.append(dictation.length() > 400 ? dictation.substring(dictation.length() - 400) : dictation);
             if (!q.isEmpty()) {
                 Map<String, ProductChunkMatch> best = new LinkedHashMap<>();
-                for (ProductChunkMatch m : productSearch.search(q.toString())) best.putIfAbsent(m.productName(), m);
+                for (ProductChunkMatch m : productSearch.search(q.toString())) {
+                    // A product the customer already holds is not one their application could depend on.
+                    if (profile != null && profile.getCoverage() != null && profile.getCoverage().holds(m.productName())) continue;
+                    best.putIfAbsent(m.productName(), m);
+                }
                 StringBuilder sb = new StringBuilder();
                 for (String name : best.keySet().stream().limit(2).toList()) {
                     StringBuilder facts = new StringBuilder();

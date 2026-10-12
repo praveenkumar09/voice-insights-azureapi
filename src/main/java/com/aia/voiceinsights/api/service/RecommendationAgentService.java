@@ -82,9 +82,19 @@ public class RecommendationAgentService {
      *  agents within one run (and several concurrent runs) call the model at once. */
     private final ExecutorService llmExecutor = Executors.newFixedThreadPool(24);
 
-    public RecommendationAgentService(@Qualifier("azureOpenAiChatModel") ChatModel chatModel, ProductVectorSearchService productSearch) {
+    private final ExistingCoverageService coverageService;
+
+    public RecommendationAgentService(@Qualifier("azureOpenAiChatModel") ChatModel chatModel, ProductVectorSearchService productSearch,
+                                      ExistingCoverageService coverageService) {
         this.chatModel = chatModel;
         this.productSearch = productSearch;
+        this.coverageService = coverageService;
+    }
+
+    // ── 0. Existing Coverage Agent — "What do they already hold?" (no LLM: the policy system is the source) ──
+
+    public ExistingCoverageResult analyseExistingCoverage(CustomerProfile profile) {
+        return coverageService.analyse(profile, productSearch.listProductNames());
     }
 
     @PreDestroy
@@ -295,7 +305,18 @@ public class RecommendationAgentService {
      * diverge from the scores that are supposed to justify it.
      */
     public ProductShortlistResult shortlistProducts(ProductScoringResult scoring) {
+        return shortlistProducts(scoring, ExistingCoverageResult.none());
+    }
+
+    /**
+     * Same rule, plus a hard exclusion: a product the customer already holds in force is never shortlisted, however well
+     * the scoring agent rated it. Done here in code, not left to a prompt, because a rule this important must not depend on a model.
+     */
+    public ProductShortlistResult shortlistProducts(ProductScoringResult scoring, ExistingCoverageResult coverage) {
+        java.util.Set<String> excluded = new java.util.HashSet<>();
+        coverage.excludedFromShortlist().forEach(n -> excluded.add(CoverageSnapshot.normalise(n)));
         List<ProductScore> ranked = scoring.scores().stream()
+                .filter(sc -> !excluded.contains(CoverageSnapshot.normalise(sc.productName())))
                 .sorted(Comparator.comparingInt(ProductScore::score).reversed())
                 .toList();
         List<String> shortlist = ranked.stream().limit(SHORTLIST_SIZE).map(ProductScore::productName).toList();
@@ -305,6 +326,10 @@ public class RecommendationAgentService {
         for (int i = 0; i < ranked.size() && i < SHORTLIST_SIZE; i++) {
             if (i > 0) rationale.append("; ");
             rationale.append(ranked.get(i).productName()).append(" (").append(Wording.relevance(ranked.get(i).score()).toLowerCase()).append(")");
+        }
+        if (!coverage.excludedFromShortlist().isEmpty()) {
+            rationale.append(". Not suggested because the customer already holds them: ")
+                    .append(String.join(", ", coverage.excludedFromShortlist()));
         }
         return new ProductShortlistResult(shortlist, rationale.toString());
     }
@@ -375,6 +400,8 @@ public class RecommendationAgentService {
                  the shortlisted products, based on the product evidence provided?
               3. Need match — does the shortlist actually address the protection
                  gaps the Need agent identified?
+            If a shortlisted product duplicates a policy listed under "Existing cover", add it to
+            "issues" and set compliant to false (the three checks stay as listed).
 
             Respond with ONLY a JSON object, no markdown fences, no commentary:
             {
@@ -393,6 +420,7 @@ public class RecommendationAgentService {
                                                   ProductShortlistResult shortlist, RagValidationResult validation) {
         try {
             String userMessage = "Customer profile:\n" + profileSummary(profile)
+                    + "\n\nExisting cover: " + verifiedCover(profile.getCoverage())
                     + "\n\nMerged analysis: " + mapper.writeValueAsString(merged)
                     + "\n\nShortlisted products: " + mapper.writeValueAsString(shortlist)
                     + "\n\nEvidence validation: " + mapper.writeValueAsString(validation);
@@ -1014,7 +1042,8 @@ public class RecommendationAgentService {
                 Occupation: %s
                 Income band: %s
                 Dependents: %s
-                Existing policies: %s
+                Existing policies (as said): %s
+                Existing policies (verified in the policy system): %s
                 Goals/concerns: %s
                 Budget notes: %s
                 Other notes: %s
@@ -1025,6 +1054,7 @@ public class RecommendationAgentService {
                 nullToUnknown(profile.getIncomeBand()),
                 profile.getDependents() == null ? "Unknown" : profile.getDependents().toString(),
                 listOrNone(profile.getExistingPolicies()),
+                verifiedCover(profile.getCoverage()),
                 listOrNone(profile.getGoalsAndConcerns()),
                 nullToUnknown(profile.getBudgetNotes()),
                 nullToUnknown(profile.getNotes()));
@@ -1046,6 +1076,11 @@ public class RecommendationAgentService {
         if (content == null) return "";
         String trimmed = content.strip();
         return trimmed.length() <= EVIDENCE_EXCERPT_MAX_CHARS ? trimmed : trimmed.substring(0, EVIDENCE_EXCERPT_MAX_CHARS) + "…";
+    }
+
+    /** What the policy system says the customer holds. UNAVAILABLE/unchecked is "not checked", never "none". */
+    private String verifiedCover(CoverageSnapshot c) {
+        return CoverageSnapshot.describe(c);
     }
 
     private String nullToUnknown(String s) { return (s == null || s.isBlank()) ? "Unknown" : s; }

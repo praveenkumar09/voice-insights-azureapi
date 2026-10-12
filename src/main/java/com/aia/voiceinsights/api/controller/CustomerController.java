@@ -98,6 +98,9 @@ public class CustomerController {
         // Live insights are produced by the voice session, not by clients — always keep the stored copy.
         profile.setLiveInsights(profile.getId() == null ? null
                 : profileStore.findById(profile.getId()).map(CustomerProfile::getLiveInsights).orElse(null));
+        // The coverage snapshot comes from the policy system via POST /{id}/coverage, never from a client write.
+        profile.setCoverage(profile.getId() == null ? null
+                : profileStore.findById(profile.getId()).map(CustomerProfile::getCoverage).orElse(null));
         if (profile.getStatus() == null || profile.getStatus().isBlank()) {
             profile.setStatus("FINALIZED");
         }
@@ -119,7 +122,7 @@ public class CustomerController {
         }
         var cleaned = new CopilotInsights.LifeMap(
                 clean(body.people(), 6), clean(body.dreams(), 6), clean(body.worries(), 6));
-        var enriched = copilotService.enrichLifeMap(cleaned);
+        var enriched = copilotService.enrichLifeMap(cleaned, profile.getCoverage());
         CopilotInsights latest = profile.getLiveInsights().latest();
         CopilotInsights updated = new CopilotInsights(latest.needs(), latest.sentiment(), latest.buyingSignal(),
                 latest.nextQuestions(), latest.complianceFlags(), latest.productMatches(), enriched, latest.askContext());

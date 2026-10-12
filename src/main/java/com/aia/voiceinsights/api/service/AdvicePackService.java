@@ -234,7 +234,8 @@ public class AdvicePackService {
         return "Name: " + nz(p.getCustomerName()) + "\nAge: " + (p.getAge() == null ? "Unknown" : p.getAge())
                 + "\nOccupation: " + nz(p.getOccupation()) + "\nIncome: " + nz(p.getIncomeBand())
                 + "\nDependants: " + (p.getDependents() == null ? "Unknown" : p.getDependents())
-                + "\nExisting policies: " + list(p.getExistingPolicies())
+                + "\nExisting policies (as said): " + list(p.getExistingPolicies())
+                + "\nExisting policies (verified in the policy system): " + CoverageSnapshot.describe(p.getCoverage())
                 + "\nGoals/concerns: " + list(p.getGoalsAndConcerns()) + "\nBudget: " + nz(p.getBudgetNotes());
     }
 
@@ -358,7 +359,15 @@ public class AdvicePackService {
             case "income": return fromProfile(s, p.getIncomeBand());
             case "budget": return fromProfile(s, p.getBudgetNotes());
             case "dependants": return fromProfile(s, p.getDependents() == null ? null : String.valueOf(p.getDependents()));
-            case "existingPolicies": return fromProfile(s, safe(p.getExistingPolicies()).isEmpty() ? null : String.join(", ", p.getExistingPolicies()));
+            case "existingPolicies": {
+                // The policy system outranks what was said; what was said is kept alongside it, so a mismatch stays visible.
+                String said = safe(p.getExistingPolicies()).isEmpty() ? null : String.join(", ", p.getExistingPolicies());
+                if (p.getCoverage() != null && p.getCoverage().verified()) {
+                    return fromProfile(s, "Verified in the policy system: " + CoverageSnapshot.describe(p.getCoverage())
+                            + (said == null ? "" : ". Said in the conversation: " + said));
+                }
+                return fromProfile(s, said);
+            }
             case "goals": {
                 String goals = safe(p.getGoalsAndConcerns()).isEmpty() ? null : String.join("; ", p.getGoalsAndConcerns());
                 return fromProfile(s, goals);

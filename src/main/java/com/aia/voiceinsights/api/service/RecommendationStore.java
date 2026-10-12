@@ -30,7 +30,7 @@ public class RecommendationStore {
 
     /** Canonical pipeline order — drives the ordering of GET /api/recommendations/{runId}'s step list. */
     public static final List<String> PIPELINE_ORDER = List.of(
-            "need", "risk", "affordability", "merge",
+            "need", "risk", "affordability", "existingCoverage", "merge",
             "persona", "productScoring", "productShortlist",
             "ragValidation", "complianceCheck", "summary", "salesReport"
     );

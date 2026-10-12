@@ -90,6 +90,9 @@ public class JunoAskService {
               instead of estimating.
             - Say "that isn't in the documents I have" only when the question asks for a specific fact the SOURCES lack, never as a
               general way to begin a refusal or a pushback answer. Vary how you open.
+            - A product the customer already holds (a source about existing cover from the policy system) is never suggested. If asked
+              why a product was not suggested and it is one they hold, say they already have it and cite that source; whether
+              a top-up or a replacement is worth discussing is the advisor's call, not yours.
             - Never name or suggest any product, product type or approach that is not in the SOURCES: no endowment, savings, or other plan
               types you may know of. If asked what else could work, say what the sources show about the products you have and that anything
               beyond them would need looking at separately.
@@ -206,6 +209,18 @@ public class JunoAskService {
         b.add("C", "customer", fromLabel, "About the customer: " + (who.isEmpty() ? "not much captured" : String.join(", ", who)) + ".", null);
         List<String> existing = profile.getExistingPolicies() == null ? List.of() : profile.getExistingPolicies();
         b.add("C", "customer", fromLabel, "Existing cover: " + (existing.isEmpty() ? "none mentioned" : String.join("; ", existing)) + ".", null);
+        // Cover confirmed by the policy system: one citable source per policy in force, so Juno can say WHY a product was left out.
+        CoverageSnapshot cover = profile.getCoverage();
+        if (cover != null && cover.verified()) {
+            if (cover.policies().isEmpty()) {
+                b.add("E", "coverage", "Policy system", "The policy system confirms the customer holds no policies, so no product was left out for being already owned.", null);
+            }
+            for (var hp : cover.policies()) {
+                if (!"IN_FORCE".equals(hp.status())) continue;
+                b.add("E", "coverage", hp.productName(), "The customer already holds " + hp.productName() + " (" + hp.category()
+                        + ", in force), confirmed by the policy system. A product the customer already holds is not suggested again.", null);
+            }
+        }
         if (notBlank(profile.getBudgetNotes())) b.add("C", "customer", fromLabel, "Budget: " + profile.getBudgetNotes(), null);
         for (String g : profile.getGoalsAndConcerns() == null ? List.<String>of() : profile.getGoalsAndConcerns()) {
             b.add("C", "customer", fromLabel, "Goal or concern: " + g, null);
@@ -313,6 +328,8 @@ public class JunoAskService {
         if (!order.isEmpty()) out.add(new Starter("Why " + order.get(0) + " first?", "Why did you suggest " + order.get(0) + " first?"));
         if (!order.isEmpty()) out.add(new Starter("The weak points", "What are the weak points of " + order.get(0) + " for " + who + "?"));
         if (order.size() > 1) out.add(new Starter(order.get(1) + " too?", "Why " + order.get(1) + " as well, and how does it sit next to " + order.get(0) + "?"));
+        c.sources().values().stream().filter(s -> "coverage".equals(s.kind()) && !"Policy system".equals(s.label())).findFirst()
+                .ifPresent(s -> out.add(new Starter("Why not " + s.label() + "?", "Why wasn't " + s.label() + " suggested?")));
         out.add(new Starter("What drove this", "What did " + who + " say that drove these suggestions?"));
         boolean flagged = c.sources().values().stream().anyMatch(s -> "compliance".equals(s.kind()) && (s.text().contains("NOT passed") || s.text().startsWith("Issue")));
         out.add(new Starter(flagged ? "What compliance flagged" : "Anything to watch?", flagged ? "What did compliance flag, and how should I handle it?" : "Is there anything here I should be careful about before I take this to " + who + "?"));

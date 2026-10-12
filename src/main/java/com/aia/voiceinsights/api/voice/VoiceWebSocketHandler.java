@@ -434,6 +434,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         analyseAndRecord(vs);
         vs.profile.setRawTranscript(vs.transcript.toString());
         vs.profile.setStatus("FINALIZED");
+        keepStoredCoverage(vs);
         profileStore.save(vs.profile);
 
         sendJsonQuiet(wsSession, Map.of("type", "profile", "profile", vs.profile));
@@ -448,8 +449,14 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
 
     private void reExtractAndPush(WebSocketSession wsSession, VoiceSession vs) {
         extractionService.extractInto(vs.profile, vs.transcript.toString(), vs.debrief, "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()));
+        keepStoredCoverage(vs);
         profileStore.save(vs.profile);
         sendJsonQuiet(wsSession, Map.of("type", "profile", "profile", vs.profile));
+    }
+
+    /** The advisor can look up existing policies (POST /api/customers/{id}/coverage) while the session holds its own copy of the profile: don't overwrite it on save. */
+    private void keepStoredCoverage(VoiceSession vs) {
+        profileStore.findById(vs.profile.getId()).map(CustomerProfile::getCoverage).ifPresent(vs.profile::setCoverage);
     }
 
     /**
@@ -475,6 +482,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     /** One copilot pass, serialized per session, that also keeps the profile's live snapshot up to date. */
     private CopilotInsights analyseAndRecord(VoiceSession vs) {
         synchronized (vs.copilotState) {
+            keepStoredCoverage(vs); // the advisor may have looked up existing policies since the last pass
             CopilotInsights insights = copilotService.analyse(vs.profile, vs.transcript.toString(), vs.copilotState);
             if (insights != null) {
                 vs.signalHistory.add(new LiveInsightsSnapshot.SignalPoint(

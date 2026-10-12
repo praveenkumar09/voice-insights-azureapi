@@ -122,6 +122,8 @@ public class RecommendationGraphFactory {
                 CompletableFuture.supplyAsync(() -> runRisk(runId, profile), parallelExecutor));
         graph.addNode("affordability", (AsyncNodeAction<RecommendationState>) state ->
                 CompletableFuture.supplyAsync(() -> runAffordability(runId, profile), parallelExecutor));
+        graph.addNode("existingCoverage", (AsyncNodeAction<RecommendationState>) state ->
+                CompletableFuture.supplyAsync(() -> runExistingCoverage(runId, profile), parallelExecutor));
         graph.addNode("merge", AsyncNodeAction.node_async(state -> runMerge(runId, profile, state)));
         graph.addNode("persona", AsyncNodeAction.node_async(state -> runPersona(runId, profile, state)));
         graph.addNode("productScoring", AsyncNodeAction.node_async(state -> runProductScoring(runId, profile, state)));
@@ -136,9 +138,11 @@ public class RecommendationGraphFactory {
         graph.addEdge(StateGraph.START, "need");
         graph.addEdge(StateGraph.START, "risk");
         graph.addEdge(StateGraph.START, "affordability");
+        graph.addEdge(StateGraph.START, "existingCoverage");
         graph.addEdge("need", "merge");
         graph.addEdge("risk", "merge");
         graph.addEdge("affordability", "merge");
+        graph.addEdge("existingCoverage", "merge");
         graph.addEdge("merge", "persona");
         graph.addEdge("persona", "productScoring");
         graph.addEdge("productScoring", "productShortlist");
@@ -211,6 +215,26 @@ public class RecommendationGraphFactory {
             eventBus.publish(runId, RecommendationEvent.agentFailed("affordability", e.getMessage()));
             logFailed("affordability", runId, start, e);
             return Map.of("affordabilityResult", fallback);
+        }
+    }
+
+    /** Packages what the policy system said about the customer's existing cover (fetched when the advisor typed the NRIC). Never fails the run. */
+    private Map<String, Object> runExistingCoverage(String runId, CustomerProfile profile) {
+        eventBus.publish(runId, RecommendationEvent.agentStarted("existingCoverage"));
+        Instant start = Instant.now();
+        try {
+            ExistingCoverageResult result = agentService.analyseExistingCoverage(profile);
+            store.saveAgentStep(runId, "existingCoverage", "COMPLETED", profile.getCoverage(), result);
+            eventBus.publish(runId, RecommendationEvent.agentCompleted("existingCoverage", result));
+            logCompleted("existingCoverage", runId, start);
+            return Map.of("coverageResult", result);
+        } catch (Exception e) {
+            ExistingCoverageResult fallback = new ExistingCoverageResult("UNAVAILABLE", List.of(), List.of(), List.of(),
+                    "Existing cover could not be checked: " + e.getMessage());
+            store.saveAgentStep(runId, "existingCoverage", "FAILED", profile.getCoverage(), fallback);
+            eventBus.publish(runId, RecommendationEvent.agentFailed("existingCoverage", e.getMessage()));
+            logFailed("existingCoverage", runId, start, e);
+            return Map.of("coverageResult", fallback);
         }
     }
 
@@ -301,8 +325,9 @@ public class RecommendationGraphFactory {
         ProductScoringResult scoring = state.<ProductScoringResult>value("scoringResult")
                 .orElseGet(() -> new ProductScoringResult(List.of(), "Not available"));
 
+        ExistingCoverageResult coverage = state.<ExistingCoverageResult>value("coverageResult").orElseGet(ExistingCoverageResult::none);
         try {
-            ProductShortlistResult result = agentService.shortlistProducts(scoring);
+            ProductShortlistResult result = agentService.shortlistProducts(scoring, coverage);
             store.saveAgentStep(runId, "productShortlist", "COMPLETED", scoring, result);
             eventBus.publish(runId, RecommendationEvent.agentCompleted("productShortlist", result));
             logCompleted("productShortlist", runId, start);
