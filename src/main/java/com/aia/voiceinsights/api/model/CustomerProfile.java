@@ -22,6 +22,8 @@ public class CustomerProfile {
     private String occupation;
     private String incomeBand;
     private Integer dependents;
+    /** One entry per person who depends on the customer ("wife", "son Ethan (8)"): the head-count is taken from this, not guessed. */
+    private List<String> dependantsList = new ArrayList<>();
     private List<String> existingPolicies = new ArrayList<>();
     private List<String> goalsAndConcerns = new ArrayList<>();
     private String budgetNotes;
@@ -61,6 +63,9 @@ public class CustomerProfile {
 
     public Integer getDependents() { return dependents; }
     public void setDependents(Integer dependents) { this.dependents = dependents; }
+
+    public List<String> getDependantsList() { return dependantsList; }
+    public void setDependantsList(List<String> dependantsList) { this.dependantsList = dependantsList == null ? new ArrayList<>() : dependantsList; }
 
     public List<String> getExistingPolicies() { return existingPolicies; }
     public void setExistingPolicies(List<String> existingPolicies) { this.existingPolicies = existingPolicies; }

@@ -3,6 +3,7 @@ package com.aia.voiceinsights.api.service;
 import com.aia.voiceinsights.api.graph.RecommendationGraphFactory;
 import com.aia.voiceinsights.api.graph.RecommendationState;
 import com.aia.voiceinsights.api.model.*;
+import com.aia.voiceinsights.api.util.Calc;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.annotation.PreDestroy;
 import org.bsc.langgraph4j.CompiledGraph;
@@ -31,7 +32,11 @@ public class ScenarioService {
     private static final long PROPOSAL_TTL_MS = 10 * 60_000L;
 
     /** One fact that would be different. {@code op}: set | add | remove. {@code from}/{@code to} are for display. */
-    public record Change(String field, String op, String value, String label, String from, String to) {}
+    public record Change(String field, String op, String value, String label, String from, String to, String say, String working) {
+        public Change(String field, String op, String value, String label, String from, String to, String say) {
+            this(field, op, value, label, from, to, say, "");
+        }
+    }
 
     /** What Juno says and shows in reply to an advisor turn that was about a scenario. */
     public record Reply(List<String> sentences, List<Map<String, Object>> events) {}
@@ -41,7 +46,7 @@ public class ScenarioService {
     public record Result(List<ProductMove> products, Boolean complianceBefore, Boolean complianceAfter, String summary, boolean changedAnything) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record RawChange(String field, String op, String value) {}
+    record RawChange(String field, String op, String value, String say, Integer childrenNow) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record Parsed(Boolean isWhatIf, String ask, List<RawChange> changes) {}
@@ -54,7 +59,7 @@ public class ScenarioService {
 
     private record Pending(String id, List<Change> changes, long at) {}
 
-    private static final Set<String> FIELDS = Set.of("age", "occupation", "incomeBand", "dependents", "budgetNotes", "existingPolicies", "goalsAndConcerns", "notes");
+    private static final Set<String> FIELDS = Set.of("age", "occupation", "incomeBand", "dependents", "children", "budgetNotes", "existingPolicies", "goalsAndConcerns", "notes");
 
     private static final Pattern WHAT_IF = Pattern.compile("(?i)(\\bwhat if\\b|\\bwhat about if\\b|\\bwhat happens if\\b|\\bsuppose\\b|\\bsupposing\\b|\\bassum(e|ing)\\b|\\bimagine\\b|\\blet'?s say\\b|\\bsay (he|she|they|the customer)\\b"
             + "|\\b(and|but|so|now) if (he|she|they|his|her|their|the customer|mr|mrs|ms)\\b|\\bif (he|she|they|his|her|their|the customer)\\b.{0,60}\\b(has|have|had|gets?|got|loses?|lost|earns?|makes?|retires?|marr\\w+|divorc\\w+|dies|changes?|moves?|wants?|stops?|starts?|buys?|bought|does ?n'?t|doesn'?t|don'?t|is|are|were|was|already)\\b"
@@ -136,6 +141,12 @@ public class ScenarioService {
             return Optional.of(new Reply(List.of(Wording.suggest(parsed.ask().trim())), List.of()));
         }
         List<Change> changes = validate(profile.get(), parsed.changes());
+        if (changes.isEmpty() && parsed.changes() != null && !parsed.changes().isEmpty()) {
+            String known = parsed.changes().stream().filter(c -> c != null && "children".equals(c.field()) && c.childrenNow() != null)
+                    .map(c -> "the file already has " + words(c.childrenNow()) + (c.childrenNow() == 1 ? " child" : " children")).findFirst()
+                    .orElse("the file says " + (profile.get().getDependents() == null ? "no dependant count" : profile.get().getDependents() + " dependants"));
+            return Optional.of(new Reply(List.of("That is already how it is: " + known + ", so nothing would change. Tell me the number or the fact that would be different."), List.of()));
+        }
         if (changes.isEmpty()) {
             return Optional.of(new Reply(List.of("I couldn't pin down which fact would be different. What would change about the customer?"), List.of()));
         }
@@ -144,7 +155,7 @@ public class ScenarioService {
         pending.put(runId, new Pending(id, changes, System.currentTimeMillis()));
         String name = firstName(profile.get());
         List<String> spoken = new ArrayList<>();
-        spoken.add("Let me check I have this right: " + String.join("; ", changes.stream().map(c -> spokenChange(c, name)).toList()) + ". Everything else stays as it is.");
+        spoken.add("Let me check I have this right: " + String.join("; ", changes.stream().filter(c -> !"-".equals(c.say())).map(c -> spokenChange(c, name)).toList()) + ". Everything else stays as it is.");
         spoken.add("Shall I run that through the analysis?");
         Map<String, Object> ev = new LinkedHashMap<>();
         ev.put("type", "scenario_proposal");
@@ -296,24 +307,77 @@ public class ScenarioService {
         List<Change> out = new ArrayList<>();
         if (raw == null) return out;
         for (RawChange r : raw) {
+            int before = out.size();
             if (r == null || r.field() == null || !FIELDS.contains(r.field()) || r.value() == null || r.value().isBlank()) continue;
             String value = r.value().trim();
             if (value.length() > 200) value = value.substring(0, 200);
             String op = r.op() == null ? "set" : r.op().toLowerCase(Locale.ROOT);
             switch (r.field()) {
                 case "age" -> {
-                    Integer v = number(value);
+                    Integer cur = profile.getAge();
+                    Integer v;
+                    String working = "";
+                    if ("shift".equals(op)) {
+                        Integer d = signed(value);
+                        if (d == null || cur == null) continue;
+                        Calc.Result res = Calc.shift(cur, d);
+                        v = res.value().intValue();
+                        working = res.working();
+                    } else {
+                        v = number(value);
+                    }
                     if (v == null || v < 16 || v > 100) continue;
-                    out.add(new Change("age", "set", String.valueOf(v), "Age", profile.getAge() == null ? "not known" : String.valueOf(profile.getAge()), String.valueOf(v)));
+                    out.add(new Change("age", "set", String.valueOf(v), "Age", cur == null ? "not known" : String.valueOf(cur), String.valueOf(v), "", working));
+                }
+                case "children" -> {
+                    // The model only reads how many children there are now and how many there would be; the sum is done by Calc.
+                    Integer after = number(value);
+                    Integer now = childrenInFile(profile, r.childrenNow());
+                    if (after == null || after < 0 || after > 12 || now == null || now < 0 || now > 12 || profile.getDependents() == null) continue;
+                    if (after.equals(now)) continue; // already true of the file
+                    Calc.Result res = Calc.totalAfterCountChange(profile.getDependents(), now, after);
+                    int total = res.value().intValue();
+                    if (total < 0 || total > 15) continue;
+                    String kids = words(after) + (after == 1 ? " child" : " children");
+                    out.add(new Change("dependents", "set", String.valueOf(total), "Dependants", String.valueOf(profile.getDependents()), String.valueOf(total),
+                            kids + " instead of " + words(now) + ", so dependants go from " + profile.getDependents() + " to " + total, res.working()));
+                    out.add(new Change("notes", "add", "Now has " + kids + " instead of " + words(now), "Also", "", "Now has " + kids + " instead of " + words(now), "-"));
                 }
                 case "dependents" -> {
-                    Integer v = number(value);
+                    Integer cur = profile.getDependents();
+                    Integer v;
+                    String working = "";
+                    if ("shift".equals(op)) {
+                        Integer d = signed(value);
+                        if (d == null || cur == null) continue;
+                        Calc.Result res = Calc.shift(cur, d);
+                        v = res.value().intValue();
+                        working = res.working();
+                    } else {
+                        v = number(value);
+                    }
                     if (v == null || v < 0 || v > 15) continue;
-                    out.add(new Change("dependents", "set", String.valueOf(v), "Dependants", profile.getDependents() == null ? "not known" : String.valueOf(profile.getDependents()), String.valueOf(v)));
+                    out.add(new Change("dependents", "set", String.valueOf(v), "Dependants", cur == null ? "not known" : String.valueOf(cur), String.valueOf(v), "", working));
                 }
-                case "occupation" -> out.add(new Change("occupation", "set", value, "Occupation", nz(profile.getOccupation()), value));
-                case "incomeBand" -> out.add(new Change("incomeBand", "set", value, "Income", nz(profile.getIncomeBand()), value));
-                case "budgetNotes" -> out.add(new Change("budgetNotes", "set", value, "Budget", nz(profile.getBudgetNotes()), value));
+                case "occupation" -> out.add(new Change("occupation", "set", value, "Occupation", nz(profile.getOccupation()), value, ""));
+                case "incomeBand", "budgetNotes" -> {
+                    boolean income = "incomeBand".equals(r.field());
+                    String cur = income ? profile.getIncomeBand() : profile.getBudgetNotes();
+                    String label = income ? "Income" : "Budget";
+                    if ("scale".equals(op) || "percent".equals(op)) {
+                        java.math.BigDecimal n = decimal(value);
+                        if (n == null) continue;
+                        java.math.BigDecimal factor = "percent".equals(op) ? Calc.factorForPercentChange(n) : n;
+                        if (factor.signum() <= 0 || factor.compareTo(java.math.BigDecimal.TEN) > 0) continue;
+                        var scaled = Calc.scaleMoneyText(cur, factor);
+                        if (scaled.isEmpty()) continue;   // the figure in the file cannot be read: better to ask than to guess
+                        out.add(new Change(r.field(), "set", scaled.get().text(), label, nz(cur), scaled.get().text(), "", scaled.get().working()));
+                    } else {
+                        // A figure the advisor gave outright ("he earns twelve thousand a month"): written in the same style as the file.
+                        String text = Calc.parseMoney(value).map(Calc::format).orElse(value);
+                        out.add(new Change(r.field(), "set", text, label, nz(cur), text, "", Calc.parseMoney(value).isPresent() ? "stated: " + value : ""));
+                    }
+                }
                 case "notes" -> {
                     String existing = profile.getNotes() == null ? "" : profile.getNotes().toLowerCase(Locale.ROOT);
                     StringBuilder fresh = new StringBuilder();
@@ -322,25 +386,34 @@ public class ScenarioService {
                         if (t.isEmpty() || existing.contains(t.toLowerCase(Locale.ROOT).replaceAll("[.!?]+$", ""))) continue;
                         fresh.append(fresh.length() == 0 ? "" : " ").append(t);
                     }
-                    if (fresh.length() > 0) out.add(new Change("notes", "add", fresh.toString(), "Also", "", fresh.toString()));
+                    if (fresh.length() > 0) out.add(new Change("notes", "add", fresh.toString(), "Also", "", fresh.toString(), ""));
                 }
                 case "existingPolicies" -> {
                     if ("remove".equals(op)) {
                         String hit = match(profile.getExistingPolicies(), value);
-                        if (hit != null) out.add(new Change("existingPolicies", "remove", hit, "Existing cover", hit, "removed"));
+                        if (hit != null) out.add(new Change("existingPolicies", "remove", hit, "Existing cover", hit, "removed", ""));
                     } else {
-                        out.add(new Change("existingPolicies", "add", value, "Existing cover", "", value));
+                        out.add(new Change("existingPolicies", "add", value, "Existing cover", "", value, ""));
                     }
                 }
                 case "goalsAndConcerns" -> {
                     if ("remove".equals(op)) {
                         String hit = match(profile.getGoalsAndConcerns(), value);
-                        if (hit != null) out.add(new Change("goalsAndConcerns", "remove", hit, "Goal or concern", hit, "removed"));
+                        if (hit != null) out.add(new Change("goalsAndConcerns", "remove", hit, "Goal or concern", hit, "removed", ""));
                     } else {
-                        out.add(new Change("goalsAndConcerns", "add", value, "Goal or concern", "", value));
+                        out.add(new Change("goalsAndConcerns", "add", value, "Goal or concern", "", value, ""));
                     }
                 }
                 default -> { }
+            }
+            if (out.size() > before) {
+                Change made = out.get(before);
+                boolean noOp = "set".equals(made.op()) && made.from() != null && made.from().trim().equalsIgnoreCase(made.to().trim());
+                if (noOp) {   // "three kids" written as 3 when the file already says 3: nothing would differ, so it is not a change
+                    out.remove(before);
+                    continue;
+                }
+                // What Juno reads back is always built here from the figures; a phrase written by the model is never spoken.
             }
             if (out.size() >= 4) break;
         }
@@ -390,7 +463,7 @@ public class ScenarioService {
         List<Change> out = new ArrayList<>();
         if (sc.changes() != null) {
             for (var n : sc.changes()) {
-                out.add(new Change(n.path("field").asText(), n.path("op").asText("set"), n.path("value").asText(), n.path("label").asText(), n.path("from").asText(), n.path("to").asText()));
+                out.add(new Change(n.path("field").asText(), n.path("op").asText("set"), n.path("value").asText(), n.path("label").asText(), n.path("from").asText(), n.path("to").asText(), n.path("say").asText(""), n.path("working").asText("")));
             }
         }
         return out;
@@ -400,11 +473,12 @@ public class ScenarioService {
 
     private static String spokenChange(Change c, String name) {
         String who = name == null ? "the customer" : name;
+        if (c.say() != null && !c.say().isBlank() && !"-".equals(c.say())) return c.say().trim().replaceAll("[.!?]+$", "");
         return switch (c.field()) {
             case "age" -> who + " is " + c.to() + " instead of " + c.from();
             case "dependents" -> "dependants go from " + c.from() + " to " + c.to();
             case "occupation" -> "the occupation becomes " + c.to();
-            case "incomeBand" -> "income becomes " + c.to();
+            case "incomeBand" -> c.from() == null || c.from().isBlank() || c.from().equals("not known") ? "income becomes " + c.to() : "income goes from " + c.from().toLowerCase(Locale.ROOT).replaceFirst("^about ", "about ") + " to " + c.to().toLowerCase(Locale.ROOT).replaceFirst("^about ", "about ");
             case "budgetNotes" -> "the budget becomes " + c.to();
             case "existingPolicies" -> "remove".equals(c.op()) ? "taking out the existing cover " + c.from() : "adding existing cover: " + c.to().replaceAll("[.!?]+$", "");
             case "goalsAndConcerns" -> "remove".equals(c.op()) ? "dropping the goal " + c.from() : "adding the goal: " + c.to().replaceAll("[.!?]+$", "");
@@ -422,11 +496,57 @@ public class ScenarioService {
                 + "\nDependants: " + (p.getDependents() == null ? "not known" : p.getDependents())
                 + "\nExisting cover: " + (p.getExistingPolicies() == null || p.getExistingPolicies().isEmpty() ? "none mentioned" : String.join("; ", p.getExistingPolicies()))
                 + "\nGoals and concerns: " + (p.getGoalsAndConcerns() == null || p.getGoalsAndConcerns().isEmpty() ? "none" : String.join("; ", p.getGoalsAndConcerns()))
-                + "\nBudget: " + nz(p.getBudgetNotes()) + "\nNotes: " + nz(p.getNotes());
+                + "\nBudget: " + nz(p.getBudgetNotes()) + "\nNotes: " + nz(p.getNotes()) + family(p);
+    }
+
+    /** The family the customer described, in their words: the dependants figure alone does not say who is in it. */
+    private static final Pattern CHILD_WORD = Pattern.compile("(?i)\\b(child|children|kid|kids|son|daughter|baby|toddler)\\b");
+
+    /** How many children the file has: counted from the dependants list when there is one, else what the model read from the notes. */
+    private static Integer childrenInFile(CustomerProfile p, Integer readByModel) {
+        List<String> list = p.getDependantsList();
+        if (list != null && !list.isEmpty()) return (int) list.stream().filter(e -> CHILD_WORD.matcher(e).find()).count();
+        return readByModel;
+    }
+
+    private static String family(CustomerProfile p) {
+        String listed = p.getDependantsList() == null || p.getDependantsList().isEmpty() ? ""
+                : "\nDependants counted in the file (" + p.getDependantsList().size() + "): " + String.join("; ", p.getDependantsList());
+        var live = p.getLiveInsights() == null ? null : p.getLiveInsights().latest();
+        if (live == null || live.lifeMap() == null || live.lifeMap().people() == null || live.lifeMap().people().isEmpty()) return listed;
+        StringBuilder b = new StringBuilder("\nFamily mentioned in the conversation:");
+        for (var person : live.lifeMap().people()) {
+            b.append("\n- ").append(person.relation() == null ? "family member" : person.relation());
+            if (person.name() != null && !person.name().isBlank()) b.append(" (").append(person.name()).append(')');
+            if (person.said() != null && !person.said().isBlank()) b.append(": \"").append(person.said()).append('"');
+        }
+        return b.append(listed).toString();
     }
 
     private static String firstName(CustomerProfile p) {
         return p.getCustomerName() == null || p.getCustomerName().isBlank() ? null : p.getCustomerName().trim();
+    }
+
+    /** "+10", "-3", "5" -> the signed whole number; null when there is none. */
+    private static Integer signed(String s) {
+        java.util.regex.Matcher m = Pattern.compile("([+-])?\\s*(\\d+)").matcher(s);
+        if (!m.find()) return null;
+        try {
+            int v = Integer.parseInt(m.group(2));
+            return "-".equals(m.group(1)) ? -v : v;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static java.math.BigDecimal decimal(String s) {
+        java.util.regex.Matcher m = Pattern.compile("-?\\d+(?:\\.\\d+)?").matcher(s.replace(",", ""));
+        return m.find() ? new java.math.BigDecimal(m.group()) : null;
+    }
+
+    private static String words(int n) {
+        String[] w = {"no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"};
+        return n >= 0 && n < w.length ? w[n] : String.valueOf(n);
     }
 
     private static Integer number(String s) {
@@ -497,21 +617,30 @@ public class ScenarioService {
     private static final String PARSE_PROMPT = """
             You turn an insurance advisor's spoken "what if" about their customer into a list of changed facts. The advisor's words come
             from speech recognition and may be slightly off. Reply with JSON only:
-            {"isWhatIf": true|false, "ask": null|"one short question", "changes": [{"field": "...", "op": "set|add|remove", "value": "..."}]}
+            {"isWhatIf": true|false, "ask": null|"one short question", "changes": [{"field": "...", "op": "set|add|remove|scale|percent|shift", "value": "...", "say": "...", "childrenNow": null}]}
 
             RULES
             - isWhatIf is true only when the advisor wonders how things would be if a FACT ABOUT THE CUSTOMER were different (family,
               age, job, income, budget, existing cover, goals or worries). It is false for anything else: questions about why a product
               was suggested, requests to reorder, drop or add a product, or what a product covers. Then give no changes.
-            - field is one of: age, dependents, occupation, incomeBand, budgetNotes, existingPolicies, goalsAndConcerns, notes.
-              age and dependents take a whole number as a string. For occupation, incomeBand and budgetNotes, op is "set" and value is the
-              full new text, written in the same style as the customer's file above. existingPolicies and goalsAndConcerns take op
+            - field is one of: age, children, dependents, occupation, incomeBand, budgetNotes, existingPolicies, goalsAndConcerns, notes.
+              For occupation, op is "set" and value is the full new text. existingPolicies and goalsAndConcerns take op
               "add" (a short phrase, the way the customer would say it) or "remove" (the entry from the file that goes away). Use notes
               for a fact that fits nowhere else.
-            - Work figures out from the file: "income drops 30%" means you compute the new income from the file's income and write it in
-              the same format; "a third child" means dependents becomes one more than now (and, only if it clearly follows, add a goal).
-            - If you cannot do that without guessing a number ("what if he's richer?", "a bit older"), set isWhatIf true, no changes, and
-              put one short question in ask ("About how much would his income be?"). Otherwise ask is null.
+            - Any change in the NUMBER OF CHILDREN uses field "children" (never "dependents" and never "notes"): value is how many children
+              there would be in total ("three kids" -> "3"), and childrenNow is how many children the file says there are now, read from the
+              notes and the family lines (two named children -> 2). Do not do any sums and do not write a dependants figure for children:
+              the system works out the dependants total. If the file does not make clear how many children there are now, set isWhatIf
+              true, no changes, and ask one short question.
+            - "Dependants" (field "dependents") is the TOTAL number of people who depend on the customer (spouse, children, parents). Use it
+              only for other dependants (a parent moving in, a spouse who stops working...), as a "shift" (+1, -1).
+            - You never do arithmetic. For income and budget use op "scale" with a multiplier written as the advisor said it ("half" -> 0.5,
+              "double" -> 2, "a third" -> 0.333), op "percent" with the signed percentage ("drops 30%" -> -30, "rises 20%" -> 20), or op "set"
+              with the figure when the advisor gives it outright ("twelve thousand a month" -> "$12,000/month"). For age and for
+              dependants use op "shift" with the signed difference ("ten years older" -> "+10", "one fewer dependant" -> "-1"), or op "set"
+              with the number when the advisor says it outright ("he is 52"). The system does the sums from the file's own figures.
+            - If the advisor gives no number you could pass on ("what if he's richer?", "a bit older"), set isWhatIf true, no changes, and put
+              one short question in ask ("About how much would his income be?"). Otherwise ask is null.
             - At most four changes. A change is ONLY what the advisor said would be different. Never repeat or copy anything that is
               already in the file, and never add facts the advisor did not mention (marital status, health, smoking, CPF and so on).
               "No home loan any more" is a notes entry of just that: "No home loan any more".

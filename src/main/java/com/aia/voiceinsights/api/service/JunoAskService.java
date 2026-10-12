@@ -1,6 +1,7 @@
 package com.aia.voiceinsights.api.service;
 
 import com.aia.voiceinsights.api.model.*;
+import com.aia.voiceinsights.api.util.Calc;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,7 +48,7 @@ public class JunoAskService {
 
     public record Starter(String label, String question) {}
 
-    private record Context(String text, Map<String, Source> sources, List<String> shortlist, String customerName, long at, boolean complete) {}
+    private record Context(String text, Map<String, Source> sources, List<String> shortlist, String customerName, long at, boolean complete, String incomeText) {}
 
     private static final String SYSTEM = """
             You are Juno, AIA Singapore's digital suggestion assistant. You are talking, out loud, with an AIA financial advisor
@@ -84,6 +85,9 @@ public class JunoAskService {
               discuss with the customer and may lead with something else on their own judgement; say what that would leave uncovered or
               what the sources say about it; and if they have new facts that change the picture, adding them to the profile and running
               the analysis again is how the suggestions change. Never open such an answer with "that isn't in the documents".
+            - NUMBERS: you never do arithmetic, convert units or round. Quote only figures that appear in the SOURCES; the ones marked as
+              calculated are exact. If you are asked for a figure or a sum that is not there, say you cannot work it out from the file
+              instead of estimating.
             - Say "that isn't in the documents I have" only when the question asks for a specific fact the SOURCES lack, never as a
               general way to begin a refusal or a pushback answer. Vary how you open.
             - Never name or suggest any product, product type or approach that is not in the SOURCES: no endowment, savings, or other plan
@@ -198,7 +202,7 @@ public class JunoAskService {
         if (profile.getAge() != null) who.add("aged " + profile.getAge());
         if (notBlank(profile.getOccupation())) who.add(profile.getOccupation());
         if (notBlank(profile.getIncomeBand())) who.add("income " + profile.getIncomeBand());
-        if (profile.getDependents() != null) who.add(profile.getDependents() + " dependants");
+        if (profile.getDependents() != null) who.add(profile.getDependents() + " dependants" + (profile.getDependantsList() == null || profile.getDependantsList().isEmpty() ? "" : " (" + String.join("; ", profile.getDependantsList()) + ")"));
         b.add("C", "customer", fromLabel, "About the customer: " + (who.isEmpty() ? "not much captured" : String.join(", ", who)) + ".", null);
         List<String> existing = profile.getExistingPolicies() == null ? List.of() : profile.getExistingPolicies();
         b.add("C", "customer", fromLabel, "Existing cover: " + (existing.isEmpty() ? "none mentioned" : String.join("; ", existing)) + ".", null);
@@ -217,6 +221,22 @@ public class JunoAskService {
             for (var w : orEmpty(live.lifeMap().worries())) {
                 b.add("C", "customer", fromLabel, "Worry: " + w.label() + (notBlank(w.forRelation()) ? " (for " + w.forRelation() + ")" : "") + (notBlank(w.said()) ? " — said: “" + w.said() + "”" : ""), null);
             }
+        }
+
+        // Sums done by the system, not the model: Juno quotes these and never works anything out itself.
+        List<String> sums = new ArrayList<>();
+        Calc.parseMoney(profile.getIncomeBand()).ifPresent(m -> {
+            Calc.Money other = m.per(m.period() == Calc.Period.MONTH ? Calc.Period.YEAR : Calc.Period.MONTH);
+            sums.add("Income in the file is " + Calc.format(m) + ", which is " + Calc.format(other) + ".");
+        });
+        var affordability = merged.get().affordability();
+        if (affordability != null && notBlank(affordability.affordablePremiumRange())) {
+            Calc.premiumShareOfIncome(affordability.affordablePremiumRange(), profile.getIncomeBand())
+                    .ifPresent(t -> sums.add("The affordable premium range (" + affordability.affordablePremiumRange() + ") is about " + t.text() + " of his income (" + t.working() + ")."));
+        }
+        if (!sums.isEmpty()) {
+            b.heading("CALCULATED BY THE SYSTEM (exact: quote these, never recompute)");
+            for (String sum : sums) b.add("N", "calc", "Calculated", sum, null);
         }
 
         // The agents' analysis
@@ -279,7 +299,7 @@ public class JunoAskService {
             }
         }
 
-        return new Context(Wording.suggest(b.text.toString()), b.sources, order, name, System.currentTimeMillis(), "COMPLETED".equalsIgnoreCase(view.status()));
+        return new Context(Wording.suggest(b.text.toString()), b.sources, order, name, System.currentTimeMillis(), "COMPLETED".equalsIgnoreCase(view.status()), profile.getIncomeBand());
     }
 
     // ── Starter questions ────────────────────────────────────────────────────────────────────────────────────────
@@ -346,7 +366,11 @@ public class JunoAskService {
                     Map<String, Source> all = new LinkedHashMap<>(ctx.sources());
                     List<Source> extra = retrieve(question, ctx);
                     long tSearch = System.currentTimeMillis();
+                    List<Source> sums = derived(question, ctx);
+                    extra = new ArrayList<>(extra);
+                    extra.addAll(sums);
                     extra.forEach(s -> all.put(s.id(), s));
+                    Set<String> allowedFigures = allowedFigures(all.values(), question);
 
                     StringBuilder system = new StringBuilder(SYSTEM)
                             .append("\nSOURCES\n").append(ctx.text());
@@ -370,6 +394,8 @@ public class JunoAskService {
                     java.util.function.Consumer<String> emit = raw -> {
                         Sentence s = clean(raw, all);
                         if (s == null) return;
+                        boolean figuresOk = figuresAllowed(s.text(), allowedFigures);
+                        if (!figuresOk) log.info("Juno ask {}: a figure in her answer is not in the sources: {}", runId.substring(0, 8), s.text());
                         if (answer.length() == 0) {
                             log.info("Juno ask {}: first sentence {}ms after the question (context {}ms, document search {}ms, first words from the model {}ms)",
                                     runId.substring(0, 8), System.currentTimeMillis() - t0, tContext - t0, tSearch - tContext, firstToken[0] == 0 ? -1 : firstToken[0] - tSearch);
@@ -380,7 +406,7 @@ public class JunoAskService {
                             Source src = all.get(String.valueOf(c.get("id")));
                             if (src != null) used.put(src.id(), src);
                         }
-                        sink.next(json(Map.of("type", "sentence", "text", s.text(), "sources", s.sources())));
+                        sink.next(json(Map.of("type", "sentence", "text", s.text(), "sources", s.sources(), "figures", figuresOk)));
                     };
                     llm[0] = chatModel.stream(new Prompt(messages, AzureOpenAiChatOptions.builder().temperature(0.4).maxTokens(380).build()))
                             .subscribe(
@@ -449,6 +475,58 @@ public class JunoAskService {
     // ── Sentences ────────────────────────────────────────────────────────────────────────────────────────────────
 
     private record Sentence(String text, List<Map<String, Object>> sources) {}
+
+    // ── Figures: Juno quotes numbers, the system calculates them ────────────────────────────────────────────────
+
+    private static final Pattern PERCENT_OF = Pattern.compile("(?i)(\\d+(?:\\.\\d+)?)\\s*(?:%|percent|per cent)\\s+of\\s+(?:his|her|their|the)?\\s*(yearly\\s+|annual\\s+|monthly\\s+)?(?:income|salary|pay|earnings)");
+    private static final Pattern FRACTION_OF = Pattern.compile("(?i)\\b(half|double|twice|triple|a third|a quarter|quarter)\\s+(?:of\\s+)?(?:his|her|their)\\s+(?:income|salary|pay|earnings)");
+
+    /** A sum the advisor asks for outright ("what is 30% of his income?") is worked out here and handed to Juno as a source. */
+    private List<Source> derived(String question, Context ctx) {
+        List<Source> out = new ArrayList<>();
+        if (ctx.incomeText() == null || Calc.parseMoney(ctx.incomeText()).isEmpty()) return out;
+        Calc.Money income = Calc.parseMoney(ctx.incomeText()).get();
+        Matcher m = PERCENT_OF.matcher(question);
+        if (m.find()) {
+            Calc.Money base = income.per(m.group(2) != null && m.group(2).toLowerCase(Locale.ROOT).startsWith("month") ? Calc.Period.MONTH
+                    : m.group(2) != null ? Calc.Period.YEAR : Calc.Period.MONTH);
+            Calc.Result r = Calc.percentOf(new java.math.BigDecimal(m.group(1)), base.mid());
+            out.add(new Source("N101", "calc", "Calculated", m.group(1) + "% of his " + (base.period() == Calc.Period.YEAR ? "yearly" : "monthly") + " income is " + Calc.dollars(r.value()) + " (" + r.working() + ").", null));
+        }
+        Matcher f = FRACTION_OF.matcher(question);
+        if (f.find()) {
+            String w = f.group(1).toLowerCase(Locale.ROOT);
+            java.math.BigDecimal factor = w.equals("half") ? new java.math.BigDecimal("0.5") : w.startsWith("double") || w.equals("twice") ? new java.math.BigDecimal("2")
+                    : w.equals("triple") ? new java.math.BigDecimal("3") : w.equals("a third") ? new java.math.BigDecimal("0.333") : new java.math.BigDecimal("0.25");
+            Calc.scaleMoneyText(ctx.incomeText(), factor).ifPresent(t -> out.add(new Source("N102", "calc", "Calculated", w + " of his income is " + t.text() + " (" + t.working() + ").", null)));
+        }
+        return out;
+    }
+
+    private static final Pattern FIGURE = Pattern.compile("(\\$)?(\\d{1,3}(?:,\\d{3})+|\\d+)(\\.\\d+)?\\s?([kKmM](?![\\p{L}])|%)?");
+
+    /** Every figure the sources (and the question) contain, in a comparable form. */
+    private static Set<String> allowedFigures(Collection<Source> sources, String question) {
+        Set<String> out = new HashSet<>();
+        for (Source s : sources) for (java.math.BigDecimal n : Calc.numbersIn(s.text())) out.add(Calc.canonical(n.toPlainString()));
+        for (java.math.BigDecimal n : Calc.numbersIn(question)) out.add(Calc.canonical(n.toPlainString()));
+        return out;
+    }
+
+    /** False when the sentence states a figure that appears nowhere in the sources: small counts and years are left alone. */
+    static boolean figuresAllowed(String sentence, Set<String> allowed) {
+        Matcher m = FIGURE.matcher(sentence);
+        while (m.find()) {
+            boolean money = m.group(1) != null, percent = "%".equals(m.group(4));
+            java.math.BigDecimal v = Calc.numbersIn(m.group()).stream().findFirst().orElse(null);
+            if (v == null) continue;
+            boolean whole = v.stripTrailingZeros().scale() <= 0;
+            if (!money && !percent && whole && v.compareTo(java.math.BigDecimal.valueOf(12)) <= 0) continue;                 // a count or a place in a list
+            if (!money && !percent && whole && v.compareTo(java.math.BigDecimal.valueOf(1900)) >= 0 && v.compareTo(java.math.BigDecimal.valueOf(2100)) <= 0) continue; // a year
+            if (!allowed.contains(Calc.canonical(v.toPlainString()))) return false;
+        }
+        return true;
+    }
 
     private static final Pattern MARKER = Pattern.compile("\\[\\s*([A-Z]\\d+(?:\\s*[,;]\\s*[A-Z]\\d+)*)\\s*\\]");
 

@@ -706,3 +706,13 @@ The advisor asks, by voice or typing, what would change if a fact about the cust
 - **Ask end-of-question** — 1.0 s of quiet (was 0.85 s); a line that ends on "and", "that", a comma etc. gets 1.6 s more, and if the advisor carries on it is not treated as the end.
 - **Test aid** — `VOICE_DEBUG_DROP_AFTER_SEGMENT=N` (docker-compose env, default 0 = off) silently kills the Azure connection once after the Nth segment.
 - **Known limit** — with a TV or other speech in the room, pauses are not quiet, so the server cannot see the end of a question (the browser's 4.5 s fallback applies) and the TV can be transcribed as the advisor.
+
+### 7.y Maths belongs to code, not the model (phase 6)
+
+`util/Calc.java` does every sum Juno relies on, with exact decimals, and returns the working beside the answer (`CalcTest`, 11 tests). The model reads facts and states *what* is wanted; it never does arithmetic.
+
+- **Operations:** read numbers ("6,000-8,000", "80k", "forty one"), parse income/budget text with its period, monthly/yearly conversion, scale ("half"), percent change ("drops 30%"), signed shifts for counts and ages, head-count totals when children change, share of income, percent-of, and one display style ("About $8,000/month").
+- **What-if (`ScenarioService`):** the model returns ops `scale | percent | shift | set` and, for children, only `value` (children after) and `childrenNow`; `Calc` computes the new figures. A change that changes nothing is dropped and Juno says "that is already how it is". The working shows under each change on the card and is stored with the scenario. When the profile has a dependants list, the number of children is counted from it in code.
+- **Debrief extraction (`ProfileExtractionService`):** the model lists each dependant as an entry (`dependantsList`), the code counts them into `dependents`; income is normalised to one style. `RecommendationAgentService.monthlyIncomeFrom` now calls `Calc`.
+- **Asking Juno (`JunoAskService`):** before she answers, the server adds calculated sources (kind `calc`, chip "Calculated"): income per month and per year, the affordable premium range as a share of income, and sums asked for outright ("30% of his income", "half his income"). The prompt forbids arithmetic, unit conversion and rounding. Every sentence is then checked: any figure that is in neither the sources nor the question (counts up to 12 and years excepted) marks the sentence with the dotted "unsourced" underline ("includes a figure not in the file"), and the server logs it. `FiguresTest`, 4 tests.
+- **Tests:** `mvn test` (JUnit 5.10.0 declared explicitly in the pom because the BOM-managed aggregate is not in the offline repository).
