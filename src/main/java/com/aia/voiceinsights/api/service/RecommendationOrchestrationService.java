@@ -5,6 +5,8 @@ import com.aia.voiceinsights.api.graph.RecommendationState;
 import com.aia.voiceinsights.api.model.*;
 import jakarta.annotation.PreDestroy;
 import org.bsc.langgraph4j.CompiledGraph;
+import org.bsc.langgraph4j.GraphInput;
+import org.bsc.langgraph4j.RunnableConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -76,7 +78,7 @@ public class RecommendationOrchestrationService {
         Instant startedAt = Instant.now();
         try {
             CompiledGraph<RecommendationState> graph = graphFactory.build(runId, profile);
-            RecommendationState finalState = graph.invoke(Map.of("started", true))
+            RecommendationState finalState = graph.invoke(GraphInput.args(Map.of("started", true)), RunnableConfig.empty())
                     .orElseThrow(() -> new IllegalStateException("Recommendation graph produced no final state"));
 
             // Defensive fallback: if the merge node's output is missing from the

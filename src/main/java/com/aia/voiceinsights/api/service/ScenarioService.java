@@ -7,6 +7,8 @@ import com.aia.voiceinsights.api.util.Calc;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.annotation.PreDestroy;
 import org.bsc.langgraph4j.CompiledGraph;
+import org.bsc.langgraph4j.GraphInput;
+import org.bsc.langgraph4j.RunnableConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -204,7 +206,7 @@ public class ScenarioService {
         long t0 = System.currentTimeMillis();
         try {
             CompiledGraph<RecommendationState> graph = graphFactory.build(scenarioRunId, scratch, true);
-            graph.invoke(Map.of("started", true)).orElseThrow(() -> new IllegalStateException("The analysis produced no result"));
+            graph.invoke(GraphInput.args(Map.of("started", true)), RunnableConfig.empty()).orElseThrow(() -> new IllegalStateException("The analysis produced no result"));
             runStore.markRunStatus(scenarioRunId, "COMPLETED", null);
             Result result = compare(baseRunId, scenarioRunId, changes);
             store.markDone(scenarioId, result);
