@@ -323,7 +323,8 @@ final class SpeechSegmenter {
             return null;
         }
         long firstGlobal = heldStartFrame + first;
-        boolean isolated = prevVoicedEndFrame < 0 || (firstGlobal - prevVoicedEndFrame) * FRAME_MS > ISOLATED_MS;
+        // The very first words of a session ("Right.", "Okay.") are not a stray sound: only later short sounds standing alone are judged as noise.
+        boolean isolated = prevVoicedEndFrame >= 0 && (firstGlobal - prevVoicedEndFrame) * FRAME_MS > ISOLATED_MS;
 
         int required = flush ? flushMinSpeechMs : minSpeechMs;
         if (singleSpeaker && !conversational && isolated) required = Math.max(required, ISOLATED_MIN_MS);
