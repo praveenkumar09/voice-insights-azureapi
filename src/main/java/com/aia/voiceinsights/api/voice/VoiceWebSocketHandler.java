@@ -199,6 +199,8 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
      * checked by the advisor on the review screen instead.
      */
     private String promptFor(VoiceSession vs, String dynamic) {
+        // Ask mode is also where Juno mode listens: the assistant's name is given so "Hey Juno" is spelled, not heard as "you know".
+        if ("ASK".equals(vs.profile.getCaptureMode())) return transcriptionPrompt(("Juno is the assistant's name: \"Hey Juno\". " + (dynamic == null ? "" : dynamic)).trim());
         if (!"JUNO_DEBRIEF".equals(vs.profile.getCaptureMode())) return transcriptionPrompt(dynamic);
         if ("en".equals(vs.lang)) return "";
         return "The advisor is speaking " + com.aia.voiceinsights.api.service.JunoPhrases.of(vs.lang).language()
