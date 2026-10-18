@@ -1,8 +1,11 @@
 package com.aia.voiceinsights.api.service;
 
 import com.aia.voiceinsights.api.model.CustomerProfile;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -23,7 +26,13 @@ public class CustomerProfileStore {
 
     private final JdbcTemplate jdbc;
     private final String schema;
-    private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+    private static final Logger log = LoggerFactory.getLogger(CustomerProfileStore.class);
+
+    /**
+     * Lenient on purpose: a stored profile may carry a field this version of the code does not know (saved by another branch or an older
+     * or newer build). That must never make a profile, an admin page or the analytics unreadable, so unknown fields are ignored.
+     */
+    private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     public CustomerProfileStore(JdbcTemplate jdbc, @Value("${voice.db.schema:voice_insights}") String schema) {
         this.jdbc = jdbc;
@@ -95,7 +104,7 @@ public class CustomerProfileStore {
                 "SELECT profile_json::text FROM %s.customer_profiles ORDER BY updated_at DESC LIMIT ? OFFSET ?"
                         .formatted(schema),
                 (rs, rowNum) -> rs.getString(1), size, page * size);
-        return rows.stream().map(this::deserialize).toList();
+        return readable(rows);
     }
 
     /** Every profile created at or after {@code since}, newest first — feeds the manager analytics. */
@@ -104,12 +113,24 @@ public class CustomerProfileStore {
                 "SELECT profile_json::text FROM %s.customer_profiles WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?"
                         .formatted(schema),
                 (rs, rowNum) -> rs.getString(1), java.sql.Timestamp.from(since), limit);
-        return rows.stream().map(this::deserialize).toList();
+        return readable(rows);
     }
 
     public long count() {
         Long total = jdbc.queryForObject("SELECT COUNT(*) FROM %s.customer_profiles".formatted(schema), Long.class);
         return total == null ? 0 : total;
+    }
+
+    /** The rows that can be read. One that cannot is logged and left out, so a single bad row never blanks a list. */
+    private List<CustomerProfile> readable(List<String> rows) {
+        return rows.stream().map(json -> {
+            try {
+                return mapper.readValue(json, CustomerProfile.class);
+            } catch (Exception e) {
+                log.warn("CustomerProfileStore: skipped a profile that could not be read: {}", e.getMessage());
+                return null;
+            }
+        }).filter(java.util.Objects::nonNull).toList();
     }
 
     private CustomerProfile deserialize(String json) {
