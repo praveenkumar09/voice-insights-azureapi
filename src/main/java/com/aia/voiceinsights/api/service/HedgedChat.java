@@ -52,15 +52,20 @@ public class HedgedChat {
 
     /** @return the model's JSON text. @throws IllegalStateException when both attempts fail or the call is given up on. */
     public String json(String system, String user, double temperature, int maxTokens) {
+        return json(system, user, temperature, maxTokens, HEDGE_AFTER_MS);
+    }
+
+    /** As above, with the second attempt starting after {@code hedgeAfterMs} (a spoken command cannot wait 4 s for a stalled call). */
+    public String json(String system, String user, double temperature, int maxTokens, long hedgeAfterMs) {
         Hedge h = new Hedge();
         attempt(h, system, user, temperature, maxTokens);
         try {
             try {
-                return h.answer.get(HEDGE_AFTER_MS, TimeUnit.MILLISECONDS);
+                return h.answer.get(hedgeAfterMs, TimeUnit.MILLISECONDS);
             } catch (TimeoutException slow) {
-                log.warn("HedgedChat: model call slow (over {} ms), starting a second attempt", HEDGE_AFTER_MS);
+                log.warn("HedgedChat: model call slow (over {} ms), starting a second attempt", hedgeAfterMs);
                 attempt(h, system, user, temperature, maxTokens);
-                return h.answer.get(GIVE_UP_AFTER_MS - HEDGE_AFTER_MS, TimeUnit.MILLISECONDS);
+                return h.answer.get(GIVE_UP_AFTER_MS - hedgeAfterMs, TimeUnit.MILLISECONDS);
             }
         } catch (Exception e) {
             throw new IllegalStateException("Model call failed: " + e, e);

@@ -97,6 +97,20 @@ public class AzureOpenAiRealtimeTranscriptionClient {
      * Gives the speech model fresh context mid-conversation (for example "a name is about to be said, and these names have
      * already been heard"), which helps it spell personal names the way the conversation has been spelling them.
      */
+    /** Juno mode's listener: only short spoken commands are expected, so the speech model is told the language and the echo check is looser. */
+    private volatile String language;
+    private volatile boolean commandMode;
+
+    /** @param lang an ISO code ("en") the speech model should transcribe in, or null to let it guess (which, in a noisy room, it does badly). */
+    public void setLanguage(String lang) {
+        String next = lang == null || lang.isBlank() ? null : lang;
+        if (java.util.Objects.equals(next, language)) return;
+        language = next;
+        if (connected) sendSessionUpdate();
+    }
+
+    public void setCommandMode(boolean on) { commandMode = on; }
+
     public void updatePrompt(String newPrompt) {
         if (newPrompt == null || newPrompt.equals(prompt)) return;
         this.prompt = newPrompt;
@@ -135,6 +149,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         Map<String, Object> transcription = new LinkedHashMap<>();
         transcription.put("model", transcriptionModel);
         if (prompt != null && !prompt.isBlank()) transcription.put("prompt", prompt);
+        if (language != null) transcription.put("language", language);
 
         // GA shape (the preview transcription_session.update API was retired): audio.input.{format, transcription,
         // noise_reduction, turn_detection}. No Azure VAD: continuous speech (or an echoey room) never gives it a
@@ -166,7 +181,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
 
     /** The browser sends nothing while the room is quiet, so the end of a question is also judged by the clock, not only by the audio received. */
     private synchronized void checkEnd(int clockGapMs) {
-        if (utteranceEndMs > 0 && segmenter.utteranceEnded(utteranceEndMs, MIN_UTTERANCE_MS, PAUSER_EXTRA_MS, clockGapMs)) {
+        if (utteranceEndMs > 0 && segmenter.utteranceEnded(utteranceEndMs, MIN_UTTERANCE_MS, commandMode ? 0 : PAUSER_EXTRA_MS, clockGapMs)) {
             final long detectedAt = System.currentTimeMillis();
             System.out.println("[voice-stt] end of question detected (" + utteranceEndMs + "ms of quiet) at " + detectedAt);
             commit(); // whatever of the utterance is still held goes out now
@@ -176,7 +191,9 @@ public class AzureOpenAiRealtimeTranscriptionClient {
                 try { Thread.sleep(60); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
                 // A sentence that stops on "and", "that", a comma... is a pause in the middle of a thought, not a finished question:
                 // give the speaker a little longer to carry on, and if they do, this was not the end.
-                if (looksUnfinished(lastFinal)) {
+                // (Juno mode skips this and the longer wait for someone who already paused: a bare "Hey Juno," makes the page wait for the
+                // command anyway, so those extra seconds only slowed every request.)
+                if (!commandMode && looksUnfinished(lastFinal)) {
                     System.out.println("[voice-stt] \"" + lastFinal + "\" sounds unfinished; waiting a little longer");
                     long until = System.currentTimeMillis() + UNFINISHED_EXTRA_MS;
                     try {
@@ -617,6 +634,8 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     private static final double MIN_MEAN_LOGPROB = -1.0;
     /** A line made only of words from the prompt is read back from it unless the model was sure of every word. */
     private static final double MIN_MEAN_LOGPROB_FOR_PROMPT_WORDS = -0.15;
+    private static final double MIN_MEAN_LOGPROB_FOR_COMMANDS = -0.6;
+    private static final double MIN_MEAN_LOGPROB_FOR_BARE_WAKE = -0.5;
     private static final int MIN_WORDS_FOR_ECHO = 1;
 
     /** Mean log-probability of the tokens, or 0 (fully sure, so the line is kept) if the service sent none. */
@@ -639,8 +658,13 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     private boolean isInvented(String transcript, double meanLogprob) {
         if (meanLogprob < MIN_MEAN_LOGPROB) return true;
         String p = prompt;
-        if (p == null || p.isBlank() || meanLogprob >= MIN_MEAN_LOGPROB_FOR_PROMPT_WORDS) return false;
         List<String> said = words(transcript);
+        // Juno mode's prompt IS the list of things the advisor may say, so a real command is made only of prompt words. In a noisy room it
+        // is heard with a lower confidence than clean speech, so a command-length line gets a looser bar; a bare "Hey Juno" (what the
+        // model reads back from the prompt when it hears nothing) keeps a stricter one. A real "Hey Juno." in a noisy room was heard at -0.26 and wrongly
+        // dropped by the old -0.15; a wake word that is falsely heard only chimes and waits, so -0.5 is safe.
+        double echoBar = !commandMode ? MIN_MEAN_LOGPROB_FOR_PROMPT_WORDS : said.size() > 2 ? MIN_MEAN_LOGPROB_FOR_COMMANDS : MIN_MEAN_LOGPROB_FOR_BARE_WAKE;
+        if (p == null || p.isBlank() || meanLogprob >= echoBar) return false;
         if (said.size() < MIN_WORDS_FOR_ECHO) return false;
         java.util.Set<String> inPrompt = new java.util.HashSet<>(words(p));
         return inPrompt.containsAll(said);

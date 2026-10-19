@@ -36,28 +36,25 @@ public class JunoCommandService {
     private record Llm(String action, Map<String, Object> params, String say, String ask) {}
 
     private static final int MAX_ACTIONS = 40;
+    /** A spoken command waits for this call, so a stalled one gets its retry early (the usual call takes about a second). */
+    private static final long HEDGE_AFTER_MS = 1800;
     private static final String NONE_SAY = "I can't do that here.";
 
     private static final String SYSTEM = """
-            You are Juno, a voice assistant inside a financial advisor's web app (AIA Voice Insights), like Siri. The advisor has just spoken a
-            request. Choose ONE action from AVAILABLE ACTIONS that does what they asked, or none.
+            You are Juno, a voice assistant in a financial advisor's web app, like Siri. Choose ONE action from AVAILABLE ACTIONS for what the
+            advisor said, or none. Reply with ONLY JSON, no fences, as short as possible:
+            {"action":"<id or none>","params":{"<name>":"<value>"},"say":"","ask":""}
 
-            Respond with ONLY a JSON object, no markdown fences:
-            {"action": "<id from AVAILABLE ACTIONS, or none>", "params": {"<name>": "<value>"}, "say": "...", "ask": "..."}
-
-            Rules:
-            - Use only the ids listed. Never invent an action.
-            - An "enum" parameter must be exactly one of its listed values: map what they said to the closest value ("follow up" or "the message"
-              is "follow_up"; "chinese" is "zh"). A "string" parameter is the advisor's own words for it (for a correction, the whole instruction).
-            - If nothing fits, or a required parameter is missing, use action "none" and put a short helpful reply in "say" that names two or three
-              things they could say on this screen, taken from AVAILABLE ACTIONS. Questions like "what can you do" get that same reply.
-            - "say": one short announcement in the present continuous, at most 12 words ("Opening Follow-up.", "Switching to Mandarin."). For
-              "none", the helpful reply. For an "info" action, a few words ("Reading it out.").
-            - "ask": only when the chosen action's risk is "change": a short yes/no question that says exactly what will change ("Change the
-              budget to $500 a month?", "Copy the message to your clipboard?"). Otherwise an empty string.
-            - You can never approve, submit or send anything. If they ask to approve or start the analysis, choose the action that points at the
-              Approve button if one is listed (its reply: tell them to press it themselves), otherwise "none".
-            - Plain English. This is a screen action, not a product suggestion: never use the words "suggest" or "recommend".
+            - The words come from speech recognition in an office and can be slightly wrong ("debrief" heard as "deprive", "Juno" as "you
+              know"). Pick the action closest in meaning and sound. "Debrief with Juno" is a mode name, so a second "Juno" belongs to it.
+            - Only listed ids. An "enum" parameter must be exactly one of its values ("follow up" is "follow_up"; "chinese" is "zh"). A
+              "string" parameter is the advisor's own words.
+            - "say" stays EMPTY unless the action is "none" (or a required parameter is missing): then one short reply naming two or three
+              things they could say here, from AVAILABLE ACTIONS ("what can you do" gets that too).
+            - "ask" stays EMPTY unless the action's risk is "change": then a short yes/no question saying exactly what will change.
+            - Never approve, submit or send anything. If asked to approve or start the analysis, choose the action that points at the Approve
+              button if one is listed (tell them to press it themselves), otherwise "none".
+            - Plain English; never use the words "suggest" or "recommend".
             """;
 
     private final HedgedChat chat;
@@ -90,7 +87,9 @@ public class JunoCommandService {
                 user.append('\n');
             }
             user.append("\nTHE ADVISOR SAID: \"").append(heard.replace("\"", "'")).append('"');
-            Llm l = mapper.readValue(chat.json(SYSTEM, user.toString(), 0.1, 220), Llm.class);
+            long t0 = System.currentTimeMillis();
+            Llm l = mapper.readValue(chat.json(SYSTEM, user.toString(), 0.1, 120, HEDGE_AFTER_MS), Llm.class);
+            log.info("JunoCommandService: model answered in {} ms: {}", System.currentTimeMillis() - t0, l.action());
             return Optional.of(checked(l, byId));
         } catch (Exception e) {
             log.warn("JunoCommandService: interpret failed: {}", e.toString());
@@ -100,7 +99,8 @@ public class JunoCommandService {
 
     /** An action stands only if it is one the page offered and its parameters are valid; anything else is "not something I can do here". */
     private static Result checked(Llm l, Map<String, ActionSpec> byId) {
-        String say = l.say() == null || l.say().isBlank() ? NONE_SAY : l.say().strip();
+        String said = l.say() == null ? "" : l.say().strip();
+        String say = said.isEmpty() ? NONE_SAY : said;
         String id = l.action() == null ? "none" : l.action().strip();
         ActionSpec spec = byId.get(id);
         if (spec == null) return new Result("none", Map.of(), "none".equals(id) ? say : NONE_SAY, "");
@@ -117,7 +117,7 @@ public class JunoCommandService {
         }
         boolean change = "change".equals(spec.risk());
         String ask = l.ask() == null ? "" : l.ask().strip();
-        if (change && ask.isEmpty()) ask = say.replaceAll("[.!]+$", "") + "?";
-        return new Result(id, params, say, change ? ask : "");
+        if (change && ask.isEmpty()) ask = (said.isEmpty() ? "Go ahead with that" : said.replaceAll("[.!]+$", "")) + "?";
+        return new Result(id, params, said, change ? ask : "");
     }
 }
