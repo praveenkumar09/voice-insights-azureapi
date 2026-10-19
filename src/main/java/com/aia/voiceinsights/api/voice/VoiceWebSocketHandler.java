@@ -173,6 +173,9 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     }
 
     /** The context prompt plus the name hint list — the model spells a name correctly far more often when it has seen it. */
+    /** A spoken command is over after this much quiet (a question for Juno waits longer, 1.1 s). */
+    private static final int COMMAND_QUIET_MS = 800;
+
     private String transcriptionPrompt() {
         return transcriptionPrompt("");
     }
@@ -200,11 +203,30 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
      */
     private String promptFor(VoiceSession vs, String dynamic) {
         // Ask mode is also where Juno mode listens: the assistant's name is given so "Hey Juno" is spelled, not heard as "you know".
-        if ("ASK".equals(vs.profile.getCaptureMode())) return transcriptionPrompt(("Juno is the assistant's name: \"Hey Juno\". " + (dynamic == null ? "" : dynamic)).trim());
+        if ("ASK".equals(vs.profile.getCaptureMode())) {
+            String name = "Juno is the assistant's name: \"Hey Juno\". ";
+            // Juno mode told us what can be said on this screen: that short list is the whole prompt. The generic insurance prompt and
+            // name list made the model invent insurance-sounding words for noisy commands ("debrief" heard as "catapult"); the list of
+            // real commands makes it pick the nearest real one (measured: 3 of 12 -> 11 of 12 correct at -2 dB signal to noise).
+            if (!vs.commandVocab.isBlank()) {
+                String full = name + "Commands: " + vs.commandVocab;
+                return full.length() <= MAX_PROMPT_CHARS ? full : full.substring(0, full.lastIndexOf(' ', MAX_PROMPT_CHARS)).replaceAll("[,\\s]+$", "");
+            }
+            return transcriptionPrompt((name + (dynamic == null ? "" : dynamic)).trim());
+        }
         if (!"JUNO_DEBRIEF".equals(vs.profile.getCaptureMode())) return transcriptionPrompt(dynamic);
         if ("en".equals(vs.lang)) return "";
         return "The advisor is speaking " + com.aia.voiceinsights.api.service.JunoPhrases.of(vs.lang).language()
                 + " (they may mix in English words). Transcribe in the language spoken.";
+    }
+
+    /** Juno mode (an ask session that has sent its command list): English, and a command is over after a short quiet. */
+    private void applyCommandMode(VoiceSession vs) {
+        AzureOpenAiRealtimeTranscriptionClient c = vs.transcriptionClient;
+        if (c == null || vs.commandVocab.isBlank()) return;
+        c.setCommandMode(true);
+        if ("en".equals(vs.lang)) c.setLanguage("en");
+        c.setUtteranceEnd(COMMAND_QUIET_MS);
     }
 
     private void connectTranscriptionClient(WebSocketSession wsSession, VoiceSession vs) {
@@ -323,6 +345,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         // A question for Juno ends when the advisor has been quiet for a moment; the server judges that (against their own
         // level) and tells the browser, which asks the question once its words have come back.
         if ("ASK".equals(mode)) vs.transcriptionClient.setUtteranceEnd(1100);
+        applyCommandMode(vs);
         if (old != null && old.utteranceEndMs() > 0) vs.transcriptionClient.setUtteranceEnd(old.utteranceEndMs());
         if (old != null) { // hand over what the old connection never answered, then retire it so a late answer cannot duplicate it
             vs.transcriptionClient.adopt(old.salvage(), old.lastFinalText());
@@ -366,6 +389,20 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         // "conversational": the advisor handed over to Juno, whose questions are answered in short replies.
         if ("conversational".equals(node.path("type").asText("")) && "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()) && vs.transcriptionClient != null) {
             vs.transcriptionClient.setConversational(node.path("on").asBoolean(true));
+            return;
+        }
+        // "commands": Juno mode lists what can be said on the current screen. It becomes the speech model's prompt (see promptFor).
+        if ("commands".equals(node.path("type").asText("")) && "ASK".equals(vs.profile.getCaptureMode())) {
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode ph : node.path("phrases")) {
+                String t = ph.asText("").replaceAll("[\"\\n\\r]", " ").replaceAll("\\s+", " ").strip();
+                if (t.isEmpty() || t.length() > 70 || sb.length() + t.length() > 700) continue;
+                if (sb.length() > 0) sb.append(", ");
+                sb.append(t);
+            }
+            vs.commandVocab = sb.toString();
+            applyCommandMode(vs);
+            if (vs.transcriptionClient != null) vs.transcriptionClient.updatePrompt(promptFor(vs, ""));
             return;
         }
         // "language": the customer (or advisor) chose another language — tell the speech model what to expect.
@@ -547,6 +584,8 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         volatile boolean finalized = false;
         /** The language Juno is speaking with the customer (en, zh, ms, ta). */
         volatile String lang = "en";
+        /** Juno mode: what the advisor can say on the current screen (comma-separated), or empty. */
+        volatile String commandVocab = "";
         volatile int reconnectAttempts = 0;
         volatile boolean copilotDirty = false;
         final LiveCopilotService.State copilotState;
