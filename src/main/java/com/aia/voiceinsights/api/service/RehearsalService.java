@@ -124,19 +124,21 @@ public class RehearsalService {
     private final HedgedChat chat;
     private final CustomerProfileStore profileStore;
     private final LiveCopilotService copilotService;
+    private final AdvicePackStore packStore;
     private final ObjectMapper mapper = new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    public RehearsalService(HedgedChat chat, CustomerProfileStore profileStore, LiveCopilotService copilotService) {
+    public RehearsalService(HedgedChat chat, CustomerProfileStore profileStore, LiveCopilotService copilotService, AdvicePackStore packStore) {
         this.chat = chat;
         this.profileStore = profileStore;
         this.copilotService = copilotService;
+        this.packStore = packStore;
     }
 
-    public Optional<Brief> brief(String profileId) {
+    public Optional<Brief> brief(String profileId, String runId) {
         CustomerProfile p = find(profileId);
         if (p == null) return Optional.empty();
         try {
-            String user = file(p) + "\nMISSING FACTS: " + missing(p) + "\n\nGive the briefing for the next meeting.";
+            String user = file(p) + plan(runId, false) + "\nMISSING FACTS: " + missing(p) + "\n\nGive the briefing for the next meeting.";
             LlmBrief b = mapper.readValue(call(BRIEF_SYSTEM, user, 0.4, 600), LlmBrief.class);
             if (b.script() == null || b.script().isBlank()) return Optional.empty();
             List<Point> points = b.points() == null ? List.of() : b.points().stream()
@@ -149,11 +151,11 @@ public class RehearsalService {
         }
     }
 
-    public Optional<Turn> turn(String profileId, List<Line> lines, String lang) {
+    public Optional<Turn> turn(String profileId, String runId, List<Line> lines, String lang) {
         CustomerProfile p = find(profileId);
         if (p == null) return Optional.empty();
         try {
-            String user = "LANGUAGE: " + JunoPhrases.of(lang).language() + "\n" + file(p) + "\n"
+            String user = "LANGUAGE: " + JunoPhrases.of(lang).language() + "\n" + file(p) + plan(runId, false) + "\n"
                     + (lines == null || lines.isEmpty() ? "ADVISOR LINES: none yet. Open the meeting.\n"
                        : "CONVERSATION SO FAR:\n" + transcript(lines) + "\nReply as the customer to the advisor's last line.\n");
             LlmTurn t = mapper.readValue(call(TURN_SYSTEM, user, 0.7, 200), LlmTurn.class);
@@ -166,12 +168,12 @@ public class RehearsalService {
         }
     }
 
-    public Optional<Scorecard> score(String profileId, List<Line> lines) {
+    public Optional<Scorecard> score(String profileId, String runId, List<Line> lines) {
         CustomerProfile p = find(profileId);
         if (p == null || lines == null) return Optional.empty();
         List<String> advisorLines = lines.stream().filter(l -> "advisor".equalsIgnoreCase(l.role()) && l.text() != null).map(Line::text).toList();
         try {
-            String user = file(p) + "\nREHEARSAL TRANSCRIPT:\n" + transcript(lines) + "\n\nWrite the coach's notes.";
+            String user = file(p) + plan(runId, true) + "\nREHEARSAL TRANSCRIPT:\n" + transcript(lines) + "\n\nWrite the coach's notes.";
             Scorecard s = mapper.readValue(call(SCORE_SYSTEM, user, 0.3, 900), Scorecard.class);
             // A quote the coach attributes to the advisor must really be something they said; anything else is dropped.
             List<Slip> slips = nz(s.slips()).stream().filter(x -> said(advisorLines, x.quote())).limit(3).toList();
@@ -190,6 +192,33 @@ public class RehearsalService {
 
     private String call(String system, String user, double temperature, int maxTokens) {
         return chat.json(system, user, temperature, maxTokens);
+    }
+
+    /**
+     * The advisor's own plan for the next meeting (from the advice pack), when the rehearsal was opened from it: what to achieve, what to
+     * ask, and the objections this customer is likely to raise. The simulated customer raises those naturally; the coach marks the advisor
+     * against them (with the suggested responses, which the customer never sees). Empty when there is no pack.
+     */
+    private String plan(String runId, boolean forCoach) {
+        if (runId == null || runId.isBlank()) return "";
+        try {
+            var nm = packStore.find(runId).map(pk -> pk.nextMeeting()).orElse(null);
+            if (nm == null) return "";
+            StringBuilder sb = new StringBuilder("\nNEXT MEETING PLAN (the advisor's own preparation):\n");
+            if (nm.objective() != null && !nm.objective().isBlank()) sb.append("Objective: ").append(trim(nm.objective(), 400)).append('\n');
+            if (nm.questionsToAsk() != null && !nm.questionsToAsk().isEmpty()) sb.append("Questions the advisor plans to ask: ").append(nm.questionsToAsk().stream().limit(6).toList()).append('\n');
+            if (nm.likelyObjections() != null && !nm.likelyObjections().isEmpty()) {
+                sb.append(forCoach ? "Likely objections and the suggested response to each:\n" : "Worries you, the customer, may voice when it fits, one at a time and in your own words (do not list them):\n");
+                nm.likelyObjections().stream().limit(5).forEach(o -> {
+                    sb.append("- ").append(trim(o.objection(), 200));
+                    if (forCoach && o.response() != null) sb.append(" -> ").append(trim(o.response(), 300));
+                    sb.append('\n');
+                });
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     private CustomerProfile find(String profileId) {

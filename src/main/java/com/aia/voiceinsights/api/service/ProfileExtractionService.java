@@ -43,8 +43,11 @@ public class ProfileExtractionService {
             Facts about anyone else (spouse, wife, husband, children, parents, friends) must NEVER go into customerName,
             age, occupation, incomeBand or existingPolicies. For example, "his wife is a housewife" or "she is 38" is about the
             wife, so the customer's occupation and age stay null unless stated about the customer himself or herself. List
-            each person who depends on the customer in "dependantsList" (one entry per person, even when unnamed: "wife",
-            "son Ethan (8)", "child", "father (supported financially)"; two unnamed children are two entries). Do NOT count them
+            each person who depends on the customer financially in "dependantsList" (one entry per person, even when unnamed:
+            "son Ethan (8)", "child", "father (supported financially)"; two unnamed children are two entries). Children and
+            parents the customer supports count. A spouse or partner does NOT count merely for being married: list them only when
+            the speaker says they rely on the customer's income (does not work, is a homemaker, is supported by the customer).
+            Otherwise leave the spouse out of the list and mention them in "notes". Do NOT count them
             yourself: the system counts the list. Record other details of such people (spouse's job, age, cover) in "notes",
             saying whose they are. A pronoun like "she" or "他太太" refers to the person last
             named: check who it refers to before assigning a fact. Pronoun gender matters: if the customer is "Mr", "he"

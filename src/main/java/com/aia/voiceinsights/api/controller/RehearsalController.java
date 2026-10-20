@@ -25,9 +25,9 @@ public class RehearsalController {
 
     private static final int MAX_LINES = 60;
 
-    public record TurnRequest(String profileId, List<RehearsalService.Line> lines, String lang) {}
+    public record TurnRequest(String profileId, String runId, List<RehearsalService.Line> lines, String lang) {}
 
-    public record ScoreRequest(String profileId, List<RehearsalService.Line> lines) {}
+    public record ScoreRequest(String profileId, String runId, List<RehearsalService.Line> lines) {}
 
     private final RehearsalService rehearsal;
     private final RateLimiterService rateLimiter;
@@ -41,7 +41,7 @@ public class RehearsalController {
     public ResponseEntity<?> brief(@RequestBody Map<String, String> body,
                                    @RequestAttribute(name = SessionAuthFilter.USER_ID_ATTR, required = false) String userId) {
         if (!allowed(userId)) return tooMany();
-        return rehearsal.brief(body.get("profileId")).<ResponseEntity<?>>map(ResponseEntity::ok)
+        return rehearsal.brief(body.get("profileId"), body.get("runId")).<ResponseEntity<?>>map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.status(502).body(Map.of("error", "Could not prepare the briefing")));
     }
 
@@ -49,7 +49,7 @@ public class RehearsalController {
     public ResponseEntity<?> turn(@RequestBody TurnRequest req,
                                   @RequestAttribute(name = SessionAuthFilter.USER_ID_ATTR, required = false) String userId) {
         if (!allowed(userId)) return tooMany();
-        return rehearsal.turn(req.profileId(), capped(req.lines()), req.lang()).<ResponseEntity<?>>map(ResponseEntity::ok)
+        return rehearsal.turn(req.profileId(), req.runId(), capped(req.lines()), req.lang()).<ResponseEntity<?>>map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.status(502).body(Map.of("error", "The customer did not answer")));
     }
 
@@ -57,7 +57,7 @@ public class RehearsalController {
     public ResponseEntity<?> score(@RequestBody ScoreRequest req,
                                    @RequestAttribute(name = SessionAuthFilter.USER_ID_ATTR, required = false) String userId) {
         if (!allowed(userId)) return tooMany();
-        return rehearsal.score(req.profileId(), capped(req.lines())).<ResponseEntity<?>>map(ResponseEntity::ok)
+        return rehearsal.score(req.profileId(), req.runId(), capped(req.lines())).<ResponseEntity<?>>map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.status(502).body(Map.of("error", "Could not write the coach's notes")));
     }
 
