@@ -56,6 +56,11 @@ public class ProductVectorSearchService {
     private volatile List<String> cachedNames = List.of();
     private volatile long namesLoadedAt = 0;
 
+    /** Forget the cached product names (a document set was just added or removed). */
+    public void refreshProductNames() {
+        namesLoadedAt = 0;
+    }
+
     /** The exact names of the products in the catalogue (cached for ten minutes). */
     public List<String> productNames() {
         if (System.currentTimeMillis() - namesLoadedAt > 600_000 || cachedNames.isEmpty()) {

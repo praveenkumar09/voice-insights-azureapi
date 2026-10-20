@@ -1,13 +1,9 @@
-# Postgres is owned by cobol-ingestor-api/docker-compose.yml on the
-# `cobalt-shared` network (bring that stack up first: `cd
-# ../cobol-ingestor-api && docker compose up -d postgres`) — this service
-# connects to it as a client (env vars below), writing only to its own
-# `voice_insights` schema (self-provisioned on first boot — see AuthStore,
-# CustomerProfileStore, RecommendationStore). Redis below is this service's
-# own instance, not shared with cobalt-rag-api's.
-networks:
-  cobalt-shared:
-    external: true
+# Self-contained: this stack owns its own Postgres (below) and Redis, so it no
+# longer needs cobol-ingestor-api running. Host ports are chosen not to clash
+# with that project (its Postgres is on 5432): Postgres 5433, Redis 6380. The
+# service writes only to its own `voice_insights` schema (self-provisioned on
+# first boot — see AuthStore, CustomerProfileStore, RecommendationStore).
+# Redis is this service's own instance, not shared with cobalt-rag-api's.
 
 services:
 
@@ -19,11 +15,10 @@ services:
     container_name: voice_insights_azure_api
     ports:
       - "8084:8084"
-    networks:
-      - default
-      - cobalt-shared
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     environment:
       AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
@@ -52,6 +47,29 @@ services:
       retries: 10
       start_period: 60s
 
+  # ── Postgres ──────────────────────────────────────────────────────────────────
+  # Own instance (same image, database and credentials as cobol-ingestor-api's,
+  # separate data volume). Host port 5433 for psql/IDE access; other containers
+  # reach it as postgres:5432.
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: voice_insights_postgres
+    environment:
+      POSTGRES_DB: ingestor
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+    networks:
+      - default
+    ports:
+      - "5433:5432"
+    volumes:
+      - voice_insights_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d ingestor"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   # ── Redis ─────────────────────────────────────────────────────────────────────
   # Session cache-aside only (see AuthStore) — Postgres stays the source of
   # truth, so a lost volume just means a cold cache next boot.
@@ -75,3 +93,4 @@ services:
 
 volumes:
   azure_redis_data:
+  voice_insights_pg_data:

@@ -105,6 +105,13 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- PDF text extraction for the Admin "Knowledge base" upload (same version as voice-insights-ingestor). -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>2.0.31</version>
+        </dependency>
+
         <!-- Traditional -> Simplified Chinese (Transliterator "Hant-Hans"): the speech model sometimes writes Mandarin in
              Traditional characters, and a prompt to prevent that makes it invent Chinese text from room noise. -->
         <dependency>
