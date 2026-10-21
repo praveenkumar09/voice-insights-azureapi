@@ -46,6 +46,8 @@ public class KnowledgeIngestService {
     private static final long MAX_ENTRY_BYTES = 50L * 1024 * 1024;
     private static final long MAX_TOTAL_BYTES = 400L * 1024 * 1024;
     private static final int EMBED_BATCH = 16;
+    /** The embedding model takes 8192 tokens per input; 6000 characters stays under that even for dense text. */
+    private static final int MAX_EMBED_CHARS = 6000;
 
     public static class FileResult {
         public String product, category, file, status, message;
@@ -93,22 +95,34 @@ public class KnowledgeIngestService {
     }
 
     /** Starts the background job; throws IllegalStateException when another upload is still running. */
-    public synchronized Job start(String zipName, byte[] zip) {
+    public synchronized Job start(String zipName, byte[] zip) { return start(zipName, zip, false); }
+
+    /**
+     * With replaceAll, every stored passage is deleted and the zip is ingested from scratch. The delete only happens once the zip
+     * has been read and holds at least one document, so a wrong or broken zip never empties the knowledge base.
+     */
+    public synchronized Job start(String zipName, byte[] zip, boolean replaceAll) {
         if (active != null && "running".equals(active.state)) throw new IllegalStateException("Another upload is still being processed. Wait for it to finish.");
         Job job = new Job(zipName == null || zipName.isBlank() ? "upload.zip" : zipName);
         active = job;
         jobs.put(job.id, job);
-        worker.submit(() -> run(job, zip));
+        worker.submit(() -> run(job, zip, replaceAll));
         return job;
     }
 
-    private void run(Job job, byte[] zip) {
+    private void run(Job job, byte[] zip, boolean replaceAll) {
         try {
             List<Doc> docs = unpack(job, zip);
             if (docs.isEmpty()) {
                 job.state = "failed";
                 job.message = "No documents found. Put the files in <Product name>/<Category>/ folders (Contract, Rider, Product Summary, Fact Sheet, FAQ, Others) as .pdf, .txt or .md. Other folders inside a product are added as Others.";
                 return;
+            }
+            if (replaceAll) {
+                job.message = "Deleting the existing embeddings…";
+                int removed = store.deleteAll();
+                job.warnings.add("Deleted " + removed + " existing passages before re-embedding.");
+                search.refreshProductNames();
             }
             int done = 0;
             for (Doc d : docs) {
@@ -247,9 +261,10 @@ public class KnowledgeIngestService {
         List<KnowledgeStore.Chunk> chunks = new ArrayList<>();
         for (int i = 0; i < sections.size(); i++) {
             var s = sections.get(i);
+            String embedText = "Product: " + d.product() + " | Category: " + d.category().folderName() + " | Section: " + s.title() + "\n\n" + s.content();
+            if (embedText.length() > MAX_EMBED_CHARS) embedText = embedText.substring(0, MAX_EMBED_CHARS);
             chunks.add(new KnowledgeStore.Chunk(chunkId(d, i), d.product(), d.category().folderName(), d.sourceFile(), i, sections.size(),
-                    s.title(), pages, s.content(),
-                    "Product: " + d.product() + " | Category: " + d.category().folderName() + " | Section: " + s.title() + "\n\n" + s.content()));
+                    s.title(), pages, s.content(), embedText));
         }
         List<float[]> vectors = new ArrayList<>();
         for (int i = 0; i < chunks.size(); i += EMBED_BATCH) {

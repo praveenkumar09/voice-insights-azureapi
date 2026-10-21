@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -117,7 +118,7 @@ public class AdvicePackService {
 
     public AdvicePack generate(String runId, String tone) {
         Inputs in = load(runId);
-        String t = TONES.contains(tone) ? tone : "warm";
+        String t = tone != null && TONES.contains(tone) ? tone : "warm";
         List<String> failed = new ArrayList<>();
 
         CompletableFuture<List<FactFindSection>> factFindF = CompletableFuture.supplyAsync(() -> factFind(in), executor);
@@ -144,7 +145,7 @@ public class AdvicePackService {
         if (!SECTIONS.contains(section)) throw new IllegalArgumentException("Unknown section " + section);
         AdvicePack old = packStore.find(runId).orElseThrow(() -> new NoSuchElementException("No advice pack yet"));
         Inputs in = load(runId);
-        String t = TONES.contains(tone) ? tone : (old.tone() == null ? "warm" : old.tone());
+        String t = tone != null && TONES.contains(tone) ? tone : (old.tone() == null ? "warm" : old.tone());
 
         List<String> failed = new ArrayList<>(old.failedSections() == null ? List.of() : old.failedSections());
         failed.remove(section);
@@ -405,36 +406,96 @@ public class AdvicePackService {
             "customerQuotes":[string],"existingCoverNote":string,"risksToDisclose":[string]}]}
             """;
 
-    private RecordOfAdvice recordOfAdvice(Inputs in) {
+    /** One product's block for the prompt: scoring reasons, concerns and the document evidence found for it. */
+    private static String productBlock(Inputs in, String name) {
         StringBuilder products = new StringBuilder();
-        for (String name : in.shortlist().shortlistedProducts()) {
-            ProductScore sc = score(in, name);
-            products.append("\n### ").append(name);
-            if (sc != null) products.append(" (").append(Wording.relevance(sc.score())).append(")\nMatch reasons: ").append(list(sc.matchReasons()))
-                    .append("\nConcerns: ").append(list(sc.concerns()));
-            products.append("\nEvidence:\n");
-            in.validation().citations().stream().filter(c -> c.productName().equalsIgnoreCase(name))
-                    .forEach(c -> products.append("- [").append(c.sourceFile()).append("] ").append(c.excerpt()).append("\n"));
-        }
-        String user = "Customer:\n" + profileBlock(in.profile()) + lifeMapBlock(in.profile())
+        ProductScore sc = score(in, name);
+        products.append("\n### ").append(name);
+        if (sc != null) products.append(" (").append(Wording.relevance(sc.score())).append(")\nMatch reasons: ").append(list(sc.matchReasons()))
+                .append("\nConcerns: ").append(list(sc.concerns()));
+        products.append("\nEvidence:\n");
+        in.validation().citations().stream().filter(c -> c.productName().equalsIgnoreCase(name))
+                .forEach(c -> products.append("- [").append(c.sourceFile()).append("] ").append(c.excerpt()).append("\n"));
+        return products.toString();
+    }
+
+    private String adviceUser(Inputs in, String products) {
+        return "Customer:\n" + profileBlock(in.profile()) + lifeMapBlock(in.profile())
                 + "\nPersona: " + in.persona().personaLabel() + " (" + in.persona().lifeStage() + ")"
                 + "\nSituation analysis: " + in.merged().combinedNarrative()
                 + "\nProtection gaps: " + list(in.merged().needs().protectionGaps())
                 + "\n\nSuggested products:" + products + "\n\nTranscript:\n" + in.transcript();
-        AdviceDraft d = agents.callJson(ADVICE_PROMPT, user, AdviceDraft.class);
+    }
+
+    private static boolean blank(DraftItem d) {
+        return d == null || ((d.need() == null || d.need().isBlank()) && (d.rationale() == null || d.rationale().isBlank()));
+    }
+
+    /**
+     * The model's item for this product. Names are compared loosely (case, punctuation, a dropped "AIA", a trailing
+     * "plan"), because an exact match used to leave a product's need, rationale, cover and risks empty whenever the
+     * model reworded the name. If the names still don't line up but the model returned one item per product, the
+     * i-th item is taken for the i-th product.
+     */
+    private static DraftItem matchDraft(List<DraftItem> drafts, Set<DraftItem> claimed, String name, int index, int total) {
+        String n = norm(name);
+        for (DraftItem x : drafts) {
+            if (x != null && !claimed.contains(x) && norm(x.productName()).equals(n)) return x;
+        }
+        for (DraftItem x : drafts) {
+            if (x == null || claimed.contains(x)) continue;
+            String m = norm(x.productName());
+            if (m.length() >= 4 && (m.contains(n) || n.contains(m))) return x;
+        }
+        if (drafts.size() == total && index < drafts.size() && drafts.get(index) != null && !claimed.contains(drafts.get(index))) return drafts.get(index);
+        return null;
+    }
+
+    private RecordOfAdvice recordOfAdvice(Inputs in) {
+        List<String> names = in.shortlist().shortlistedProducts();
+        StringBuilder products = new StringBuilder();
+        for (String name : names) products.append(productBlock(in, name));
+        AdviceDraft d = agents.callJson(ADVICE_PROMPT, adviceUser(in, products.toString()), AdviceDraft.class);
+        List<DraftItem> drafts = safe(d.items());
+        String needsSummary = d.needsSummary() == null ? "" : d.needsSummary().trim();
 
         String hay = norm(in.transcript());
+        Set<DraftItem> claimed = new HashSet<>();
         List<AdviceItem> items = new ArrayList<>();
-        for (String name : in.shortlist().shortlistedProducts()) {
-            DraftItem di = safe(d.items()).stream().filter(x -> x != null && name.equalsIgnoreCase(x.productName())).findFirst().orElse(null);
+        for (int i = 0; i < names.size(); i++) {
+            String name = names.get(i);
+            DraftItem di = matchDraft(drafts, claimed, name, i, names.size());
+            if (blank(di)) {
+                // The model skipped or mangled this product: ask again for just this one.
+                try {
+                    AdviceDraft one = agents.callJson(ADVICE_PROMPT, adviceUser(in, productBlock(in, name)), AdviceDraft.class);
+                    DraftItem got = matchDraft(safe(one.items()), new HashSet<>(), name, 0, 1);
+                    if (!blank(got)) di = got;
+                    if (needsSummary.isEmpty() && one.needsSummary() != null) needsSummary = one.needsSummary().trim();
+                } catch (Exception e) {
+                    log.warn("Record of advice retry for '{}' failed: {}", name, e.getMessage());
+                }
+            }
+            if (di != null) claimed.add(di);
             ProductScore sc = score(in, name);
             List<Evidence> ev = in.validation().citations().stream().filter(c -> c.productName().equalsIgnoreCase(name))
                     .map(c -> new Evidence(c.sourceFile(), c.excerpt())).toList();
-            items.add(new AdviceItem(name, sc == null ? 0 : sc.score(),
-                    di == null ? "" : nz2(di.need()), di == null ? "" : nz2(di.rationale()),
-                    di == null ? List.of() : verified(hay, di.customerQuotes(), 2), ev,
-                    di == null ? "" : nz2(di.existingCoverNote()), di == null ? List.of() : safe(di.risksToDisclose()),
-                    sc == null ? List.of() : safe(sc.matchReasons()), sc == null ? List.of() : safe(sc.concerns())));
+            List<String> reasons = sc == null ? List.of() : safe(sc.matchReasons());
+            List<String> concerns = sc == null ? List.of() : safe(sc.concerns());
+            // Last resort, so a card is never blank: fall back to what the analysis itself recorded.
+            String need = di == null ? "" : nz2(di.need());
+            if (need.isEmpty()) need = reasons.isEmpty() ? "" : reasons.get(0);
+            String why = di == null ? "" : nz2(di.rationale());
+            if (why.isEmpty()) why = String.join(" ", reasons);
+            String cover = di == null ? "" : nz2(di.existingCoverNote());
+            if (cover.isEmpty()) {
+                List<String> have = safe(in.profile().getExistingPolicies());
+                cover = have.isEmpty() ? "No existing cover mentioned" : "Existing cover: " + String.join("; ", have);
+            }
+            List<String> risks = di == null ? List.of() : safe(di.risksToDisclose()).stream().filter(r -> r != null && !r.isBlank()).toList();
+            if (risks.isEmpty()) risks = concerns;
+            items.add(new AdviceItem(name, sc == null ? 0 : sc.score(), need, why,
+                    di == null ? List.of() : verified(hay, di.customerQuotes(), 2), ev, cover, risks, reasons, concerns));
         }
 
         List<CheckItem> checks = in.compliance() == null ? List.of()
@@ -447,7 +508,7 @@ public class AdvicePackService {
                 "Illustrative layout only — not an approved AIA or regulatory form."));
         if (in.compliance() != null) safe(in.compliance().issues()).forEach(i -> disclosures.add("Compliance issue raised: " + i));
 
-        return new RecordOfAdvice(d.needsSummary() == null ? "" : d.needsSummary().trim(), items, checks, flags, disclosures,
+        return new RecordOfAdvice(needsSummary, items, checks, flags, disclosures,
                 in.compliance() == null || in.compliance().compliant());
     }
 

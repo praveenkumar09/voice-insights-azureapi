@@ -56,7 +56,11 @@ public class KnowledgeStore {
     }
 
     /** Replaces everything stored for one document with these chunks (all or nothing). */
-    public void replaceDocument(String product, String category, String sourceFile, List<Chunk> chunks, List<float[]> vectors) {
+    public void replaceDocument(String product, String category, String sourceFile, List<Chunk> rawChunks, List<float[]> vectors) {
+        // Last line of defence: Postgres rejects NUL (0x00) in text and jsonb, whatever the source file contained.
+        List<Chunk> chunks = rawChunks.stream().map(c -> new Chunk(DocumentChunker.clean(c.chunkId()), DocumentChunker.clean(c.productName()),
+                DocumentChunker.clean(c.docCategory()), DocumentChunker.clean(c.sourceFile()), c.chunkIndex(), c.totalChunks(),
+                DocumentChunker.clean(c.sectionTitle()), c.pageCount(), DocumentChunker.clean(c.content()), DocumentChunker.clean(c.embeddingText()))).toList();
         tx.executeWithoutResult(status -> {
             jdbc.update("DELETE FROM %s.product_chunks WHERE product_name = ? AND doc_category = ? AND source_file = ?".formatted(schema),
                     product, category, sourceFile);
@@ -93,6 +97,11 @@ public class KnowledgeStore {
                         updated.get(e.getKey()), e.getValue()))
                 .sorted((a, b) -> String.valueOf(b.updatedAt()).compareTo(String.valueOf(a.updatedAt())))
                 .toList();
+    }
+
+    /** Removes every embedded passage (the Admin "start from scratch" reset). */
+    public int deleteAll() {
+        return jdbc.update("DELETE FROM %s.product_chunks".formatted(schema));
     }
 
     public int deleteProduct(String product) {

@@ -31,12 +31,13 @@ public class KnowledgeController {
     public List<KnowledgeStore.ProductRow> products() { return store.products(); }
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<?> upload(@RequestParam("file") MultipartFile file) throws Exception {
+    public ResponseEntity<?> upload(@RequestParam("file") MultipartFile file,
+                                    @RequestParam(name = "replaceAll", defaultValue = "false") boolean replaceAll) throws Exception {
         String name = file.getOriginalFilename();
         if (file.isEmpty() || name == null || !name.toLowerCase().endsWith(".zip"))
             return ResponseEntity.badRequest().body(Map.of("error", "Choose a .zip file."));
         try {
-            return ResponseEntity.accepted().body(ingest.start(name, file.getBytes()));
+            return ResponseEntity.accepted().body(ingest.start(name, file.getBytes(), replaceAll));
         } catch (IllegalStateException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
         }

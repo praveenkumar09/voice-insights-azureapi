@@ -30,8 +30,49 @@ public class DocumentChunker {
     }
 
     public List<Section> chunk(String fullText, DocCategory category) {
-        List<String> lines = fullText.lines().map(String::trim).filter(l -> !l.isEmpty()).toList();
+        // Clean first (NUL bytes make Postgres reject the row), then make sure no single line is longer than a chunk: a PDF whose
+        // text has no line breaks used to become one huge chunk that the embedding model refused (8192-token limit).
+        List<String> lines = clean(fullText).lines().map(String::trim).filter(l -> !l.isEmpty())
+                .flatMap(l -> splitLong(l).stream()).toList();
         return category == DocCategory.FAQ ? chunkFaq(lines) : chunkByHeading(lines);
+    }
+
+    /**
+     * Strips what Postgres text/jsonb columns cannot hold or that is only extraction noise: NUL and other control characters
+     * (tabs and line breaks are kept) and unpaired surrogates. Public so the store can apply the same rule as a last line of defence.
+     */
+    public static String clean(String s) {
+        if (s == null) return "";
+        StringBuilder out = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (Character.isHighSurrogate(c) && i + 1 < s.length() && Character.isLowSurrogate(s.charAt(i + 1))) {
+                out.append(c).append(s.charAt(++i));
+            } else if (Character.isSurrogate(c)) {
+                // unpaired: drop
+            } else if (c == '\n' || c == '\t' || c == '\r' || (c >= 0x20 && c != 0x7f && !(c >= 0x80 && c < 0xa0) && c != 0xfffe && c != 0xffff)) {
+                out.append(c);
+            } else if (c != 0) {
+                out.append(' ');
+            }
+        }
+        return out.toString();
+    }
+
+    /** Cuts text longer than maxChars into pieces of at most maxChars, preferably at a space. */
+    private List<String> splitLong(String text) {
+        if (text.length() <= maxChars) return List.of(text);
+        List<String> out = new ArrayList<>();
+        String rest = text;
+        while (rest.length() > maxChars) {
+            int cut = rest.lastIndexOf(' ', maxChars);
+            if (cut < maxChars / 2) cut = maxChars; // no usable space (e.g. unbroken text): hard cut
+            if (cut > 0 && Character.isHighSurrogate(rest.charAt(cut - 1))) cut--;
+            out.add(rest.substring(0, cut).trim());
+            rest = rest.substring(cut).trim();
+        }
+        if (!rest.isEmpty()) out.add(rest);
+        return out;
     }
 
     private boolean isHeading(String line) {
@@ -60,7 +101,8 @@ public class DocumentChunker {
     private void flush(List<Section> sections, StringBuilder buffer) {
         String content = buffer.toString().trim();
         if (content.isBlank()) return;
-        sections.add(new Section(extractQuestion(content), content));
+        String title = extractQuestion(content);
+        for (String piece : splitLong(content)) sections.add(new Section(title, piece));
     }
 
     private String extractQuestion(String qaText) {
