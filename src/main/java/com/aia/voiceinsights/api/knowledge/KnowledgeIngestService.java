@@ -185,7 +185,7 @@ public class KnowledgeIngestService {
         java.util.Set<String> productPaths = new java.util.LinkedHashSet<>();
         for (Raw r : raws) {
             int ci = categoryIndex(r.seg());
-            if (ci >= 1) productPaths.add(String.join("/", java.util.Arrays.copyOfRange(r.seg(), 0, ci)));
+            if (ci >= 1) productPaths.add(String.join("/", java.util.Arrays.copyOfRange(r.seg(), 0, productIndex(r.seg(), ci) + 1)));
         }
 
         List<Doc> docs = new ArrayList<>();
@@ -196,9 +196,13 @@ public class KnowledgeIngestService {
             String rel;
             int ci = categoryIndex(r.seg());
             if (ci >= 1) {
-                product = seg[ci - 1].trim();
+                int pi = productIndex(seg, ci);
+                product = seg[pi].trim();
                 cat = DocCategory.fromFolderName(seg[ci]);
                 rel = String.join("/", java.util.Arrays.copyOfRange(seg, ci + 1, seg.length));
+                // Version folders between the product and the category ("2024-NB Renewal - Sep 2024") stay in the document name, so two
+                // versions of the same rider don't overwrite each other, but they are never mistaken for the product.
+                if (pi < ci - 1) rel = String.join("/", java.util.Arrays.copyOfRange(seg, pi + 1, ci)) + "/" + rel;
             } else {
                 // Not under a category folder (a "Brochures" folder, or a file straight in the product folder): keep it, as "Others".
                 String owner = null;
@@ -219,6 +223,23 @@ public class KnowledgeIngestService {
             docs.add(new Doc(product, cat, rel, r.bytes(), fr));
         }
         return docs;
+    }
+
+    /** A folder that names a version or period of a product rather than a product: "2024-NB Renewal - Sep 2024", "v2", "Rev 3", "2023". */
+    private static final java.util.regex.Pattern VERSION_DIR = java.util.regex.Pattern.compile(
+            "(?i)^(v(ersion)?\\s*[\\d.]+|rev(ision)?\\s*[\\d.]+|(19|20)\\d{2})$"
+            + "|(?=.*\\b(19|20)\\d{2}\\b)(?=.*(\\bNB\\b|new business|renewal|version|revision|edition|release|update|effective|"
+            + "\\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\b|\\bq[1-4]\\b)).*");
+
+    /**
+     * Index (in seg) of the product folder for a file whose category folder is at ci. Normally the folder just above the category; but
+     * when that folder is a version/period folder (Product / 2024-NB Renewal - Sep 2024 / Rider / file.pdf) the product is the
+     * nearest folder above it that is not one. The top folder is never skipped, and if every folder looks like a version the old
+     * rule (the folder just above the category) applies.
+     */
+    private static int productIndex(String[] seg, int ci) {
+        for (int i = ci - 1; i >= 1; i--) if (!VERSION_DIR.matcher(seg[i].trim()).matches()) return i;
+        return ci - 1;
     }
 
     private static int categoryIndex(String[] seg) {
