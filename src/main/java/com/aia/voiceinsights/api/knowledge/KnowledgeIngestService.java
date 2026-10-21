@@ -212,6 +212,7 @@ public class KnowledgeIngestService {
                 int depth;
                 if (owner != null) depth = owner.split("/").length;
                 else if (productPaths.isEmpty() && seg.length >= 2) depth = 1; // no categories anywhere: first folder is the product
+                else if (commonDepth(productPaths) > 0 && seg.length > commonDepth(productPaths)) depth = commonDepth(productPaths); // a product with no category folders of its own: products sit at the same depth as the others
                 else { job.warnings.add("Skipped " + r.name() + " — could not tell which product it belongs to."); continue; }
                 if (seg.length <= depth) { job.warnings.add("Skipped " + r.name() + " — not inside a product folder."); continue; }
                 product = seg[depth - 1].trim();
@@ -240,6 +241,13 @@ public class KnowledgeIngestService {
     private static int productIndex(String[] seg, int ci) {
         for (int i = ci - 1; i >= 1; i--) if (!VERSION_DIR.matcher(seg[i].trim()).matches()) return i;
         return ci - 1;
+    }
+
+    /** The folder depth at which the zip's other products sit (the most common one); 0 when unknown. */
+    private static int commonDepth(java.util.Set<String> productPaths) {
+        Map<Integer, Integer> counts = new java.util.HashMap<>();
+        for (String pp : productPaths) counts.merge(pp.split("/").length, 1, Integer::sum);
+        return counts.entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse(0);
     }
 
     private static int categoryIndex(String[] seg) {

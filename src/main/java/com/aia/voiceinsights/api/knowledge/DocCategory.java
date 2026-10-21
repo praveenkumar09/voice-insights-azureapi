@@ -18,10 +18,16 @@ public enum DocCategory {
 
     public String folderName() { return folderName; }
 
-    /** Case- and whitespace-insensitive match of a folder name; null if it is not a category. */
+    /**
+     * Case-, whitespace- and punctuation-insensitive match of a folder name, tolerating singular/plural and the common spellings
+     * ("Other", "Riders", "Contracts", "FAQs", "FactSheet", "Product Summaries"); null if it is not a category.
+     */
     public static DocCategory fromFolderName(String folderName) {
-        String n = folderName.trim().toLowerCase();
-        for (DocCategory c : values()) if (c.folderName.toLowerCase().equals(n)) return c;
+        String n = folderName.toLowerCase().replaceAll("[^a-z]", "");
+        for (DocCategory c : values()) {
+            String f = c.folderName.toLowerCase().replaceAll("[^a-z]", "");
+            if (f.equals(n) || (f + "s").equals(n) || f.equals(n + "s") || (f.endsWith("y") && (f.substring(0, f.length() - 1) + "ies").equals(n))) return c;
+        }
         return null;
     }
 }
