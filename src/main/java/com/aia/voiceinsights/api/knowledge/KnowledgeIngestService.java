@@ -227,7 +227,7 @@ public class KnowledgeIngestService {
 
     /** A folder that names a version or period of a product rather than a product: "2024-NB Renewal - Sep 2024", "v2", "Rev 3", "2023". */
     private static final java.util.regex.Pattern VERSION_DIR = java.util.regex.Pattern.compile(
-            "(?i)^(v(ersion)?\\s*[\\d.]+|rev(ision)?\\s*[\\d.]+|(19|20)\\d{2})$"
+            "(?i)^(v(ersion)?\\s*[\\d.]+|rev(ision)?\\s*[\\d.]+|(19|20)\\d{2})$|^(19|20)\\d{4}(\\d{2})?\\b"
             + "|(?=.*\\b(19|20)\\d{2}\\b)(?=.*(\\bNB\\b|new business|renewal|version|revision|edition|release|update|effective|"
             + "\\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\b|\\bq[1-4]\\b)).*");
 
