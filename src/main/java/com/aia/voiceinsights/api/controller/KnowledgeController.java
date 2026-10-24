@@ -36,10 +36,15 @@ public class KnowledgeController {
         String name = file.getOriginalFilename();
         if (file.isEmpty() || name == null || !name.toLowerCase().endsWith(".zip"))
             return ResponseEntity.badRequest().body(Map.of("error", "Choose a .zip file."));
+        // Spool the upload to disk (it can be hundreds of MB); the ingest job owns the file and deletes it when done.
+        java.nio.file.Path tmp = java.nio.file.Files.createTempFile("knowledge-upload-", ".zip");
         try {
-            return ResponseEntity.accepted().body(ingest.start(name, file.getBytes(), replaceAll));
-        } catch (IllegalStateException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
+            file.transferTo(tmp);
+            return ResponseEntity.accepted().body(ingest.start(name, tmp, replaceAll));
+        } catch (Exception e) {
+            java.nio.file.Files.deleteIfExists(tmp);
+            if (e instanceof IllegalStateException) return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
+            throw e;
         }
     }
 

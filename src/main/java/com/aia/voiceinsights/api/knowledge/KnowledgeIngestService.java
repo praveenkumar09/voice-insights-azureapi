@@ -9,9 +9,11 @@ import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -22,7 +24,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import java.util.zip.ZipFile;
 
 /**
  * Turns an uploaded zip of policy documents into searchable vectors.
@@ -33,8 +35,8 @@ import java.util.zip.ZipInputStream;
  *       file.pdf | .txt | .md
  * </pre>
  *
- * The zip is read in memory (nothing is written to disk, so a hostile entry name cannot escape anywhere), with caps on entry count and
- * uncompressed size. Each document is chunked, embedded with the same Azure embedding deployment that answers searches, and swapped in
+ * The upload is kept as one temporary file and each document is read out of it in turn (nothing is extracted to disk, so a hostile entry
+ * name cannot escape anywhere; memory use stays at one document), with caps on entry count and uncompressed size. Each document is chunked, embedded with the same Azure embedding deployment that answers searches, and swapped in
  * for whatever was stored for that document before (all or nothing), so re-uploading a corrected file never leaves stale chunks.
  * The work runs in the background, one upload at a time; the Admin page polls {@link #job}.
  */
@@ -43,8 +45,9 @@ public class KnowledgeIngestService {
 
     private static final Logger log = LoggerFactory.getLogger(KnowledgeIngestService.class);
     private static final int MAX_ENTRIES = 2000;
-    private static final long MAX_ENTRY_BYTES = 50L * 1024 * 1024;
-    private static final long MAX_TOTAL_BYTES = 400L * 1024 * 1024;
+    private static final long MAX_ENTRY_BYTES = 150L * 1024 * 1024;
+    // Counted from the zip's own directory, before anything is read: a guard against zip bombs, not a limit on the upload (which is 700 MB).
+    private static final long MAX_TOTAL_BYTES = 4L * 1024 * 1024 * 1024;
     private static final int EMBED_BATCH = 16;
     /** The embedding model takes 8192 tokens per input; 6000 characters stays under that even for dense text. */
     private static final int MAX_EMBED_CHARS = 6000;
@@ -68,7 +71,8 @@ public class KnowledgeIngestService {
         Job(String zipName) { this.zipName = zipName; }
     }
 
-    private record Doc(String product, DocCategory category, String sourceFile, byte[] bytes, FileResult result) {}
+    /** One document inside the zip, read from disk only when its turn comes, so a 700 MB zip never sits in memory. */
+    private record Doc(String product, DocCategory category, String sourceFile, Path zip, String entryName, FileResult result) {}
 
     private final KnowledgeStore store;
     private final EmbeddingModel embeddings;
@@ -95,13 +99,13 @@ public class KnowledgeIngestService {
     }
 
     /** Starts the background job; throws IllegalStateException when another upload is still running. */
-    public synchronized Job start(String zipName, byte[] zip) { return start(zipName, zip, false); }
+    public synchronized Job start(String zipName, Path zip) { return start(zipName, zip, false); }
 
     /**
      * With replaceAll, every stored passage is deleted and the zip is ingested from scratch. The delete only happens once the zip
      * has been read and holds at least one document, so a wrong or broken zip never empties the knowledge base.
      */
-    public synchronized Job start(String zipName, byte[] zip, boolean replaceAll) {
+    public synchronized Job start(String zipName, Path zip, boolean replaceAll) {
         if (active != null && "running".equals(active.state)) throw new IllegalStateException("Another upload is still being processed. Wait for it to finish.");
         Job job = new Job(zipName == null || zipName.isBlank() ? "upload.zip" : zipName);
         active = job;
@@ -110,7 +114,7 @@ public class KnowledgeIngestService {
         return job;
     }
 
-    private void run(Job job, byte[] zip, boolean replaceAll) {
+    private void run(Job job, Path zip, boolean replaceAll) {
         try {
             List<Doc> docs = unpack(job, zip);
             if (docs.isEmpty()) {
@@ -150,20 +154,22 @@ public class KnowledgeIngestService {
             job.state = "failed";
             job.message = e instanceof IOException ? "That file could not be read as a zip." : (e.getMessage() == null ? "Upload failed." : e.getMessage());
         } finally {
+            try { Files.deleteIfExists(zip); } catch (IOException e) { log.warn("Could not delete the temporary upload {}", zip); }
             job.finishedAt = Instant.now();
         }
     }
 
     // ── reading the zip ──
-    private record Raw(String name, String[] seg, byte[] bytes) {}
+    private record Raw(String name, String[] seg) {}
 
-    private List<Doc> unpack(Job job, byte[] zip) throws IOException {
+    private List<Doc> unpack(Job job, Path zip) throws IOException {
         List<Raw> raws = new ArrayList<>();
         int entries = 0;
         long total = 0;
-        try (ZipInputStream in = new ZipInputStream(new ByteArrayInputStream(zip), StandardCharsets.UTF_8)) {
-            ZipEntry e;
-            while ((e = in.getNextEntry()) != null) {
+        try (ZipFile zf = new ZipFile(zip.toFile(), StandardCharsets.UTF_8)) {
+            var en = zf.entries();
+            while (en.hasMoreElements()) {
+                ZipEntry e = en.nextElement();
                 if (e.isDirectory()) continue;
                 if (++entries > MAX_ENTRIES) throw new IllegalStateException("The zip has more than " + MAX_ENTRIES + " files.");
                 String[] seg = e.getName().replace('\\', '/').split("/");
@@ -173,10 +179,10 @@ public class KnowledgeIngestService {
                 String leaf = seg[seg.length - 1];
                 String ext = leaf.contains(".") ? leaf.substring(leaf.lastIndexOf('.') + 1).toLowerCase() : "";
                 if (!List.of("pdf", "txt", "md").contains(ext)) { job.warnings.add("Skipped " + e.getName() + " — only .pdf, .txt and .md are read."); continue; }
-                byte[] bytes = readCapped(in, e.getName());
-                total += bytes.length;
+                if (e.getSize() > MAX_ENTRY_BYTES) throw new IllegalStateException(e.getName() + " is larger than " + (MAX_ENTRY_BYTES >> 20) + " MB.");
+                total += Math.max(e.getSize(), 0);
                 if (total > MAX_TOTAL_BYTES) throw new IllegalStateException("The zip is too large once unpacked.");
-                raws.add(new Raw(e.getName(), seg, bytes));
+                raws.add(new Raw(e.getName(), seg));
             }
         }
 
@@ -221,7 +227,7 @@ public class KnowledgeIngestService {
             }
             FileResult fr = new FileResult(product, cat.folderName(), rel);
             job.files.add(fr);
-            docs.add(new Doc(product, cat, rel, r.bytes(), fr));
+            docs.add(new Doc(product, cat, rel, zip, r.name(), fr));
         }
         return docs;
     }
@@ -255,32 +261,40 @@ public class KnowledgeIngestService {
         return -1;
     }
 
-    private static byte[] readCapped(ZipInputStream in, String name) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        long n = 0;
-        int r;
-        while ((r = in.read(buf)) > 0) {
-            n += r;
-            if (n > MAX_ENTRY_BYTES) throw new IllegalStateException(name + " is larger than 50 MB.");
-            out.write(buf, 0, r);
+    /** Reads one entry out of the stored zip, never more than MAX_ENTRY_BYTES (the declared size in a zip can be wrong). */
+    private static byte[] readEntry(Doc d) throws IOException {
+        try (ZipFile zf = new ZipFile(d.zip().toFile(), StandardCharsets.UTF_8)) {
+            ZipEntry e = zf.getEntry(d.entryName());
+            if (e == null) throw new IOException(d.entryName() + " is missing from the zip.");
+            try (InputStream in = zf.getInputStream(e)) {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                long n = 0;
+                int r;
+                while ((r = in.read(buf)) > 0) {
+                    n += r;
+                    if (n > MAX_ENTRY_BYTES) throw new IllegalStateException(d.entryName() + " is larger than " + (MAX_ENTRY_BYTES >> 20) + " MB.");
+                    out.write(buf, 0, r);
+                }
+                return out.toByteArray();
+            }
         }
-        return out.toByteArray();
     }
 
     // ── one document ──
     private int ingest(Doc d) throws Exception {
+        byte[] bytes = readEntry(d);
         String text;
         int pages = 1;
         if (d.sourceFile().toLowerCase().endsWith(".pdf")) {
-            try (PDDocument pdf = PDDocument.load(d.bytes())) {
+            try (PDDocument pdf = PDDocument.load(bytes)) {
                 PDFTextStripper stripper = new PDFTextStripper();
                 stripper.setSortByPosition(true);
                 text = stripper.getText(pdf);
                 pages = pdf.getNumberOfPages();
             }
         } else {
-            text = new String(d.bytes(), StandardCharsets.UTF_8);
+            text = new String(bytes, StandardCharsets.UTF_8);
         }
         List<DocumentChunker.Section> sections = new DocumentChunker(maxChars).chunk(text, d.category());
         if (sections.isEmpty()) {
