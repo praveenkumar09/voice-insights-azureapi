@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>AIA Voice Insights: one-slide EXCO view</title>
+<style>
+@page{size:1920px 1080px;margin:0}
+:root{--red:#D31145;--deep:#6E0A27;--wine:#3B0516;--blush:#FCE8EE;--ink:#1D1D1F;--grey:#6E6E73;--line:#EBD3DA}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px;overflow:hidden}
+body{font-family:"Avenir Next","Helvetica Neue",Arial,sans-serif;color:var(--ink);background:#FFF8FA;-webkit-print-color-adjust:exact;print-color-adjust:exact;position:relative}
+/* background texture */
+.bg{position:absolute;inset:0;background:
+ radial-gradient(900px 600px at 100% -10%,rgba(211,17,69,.14),transparent 60%),
+ radial-gradient(700px 500px at -5% 45%,rgba(211,17,69,.07),transparent 60%),#FFF8FA}
+.wrap{position:absolute;inset:0;padding:34px 56px 0}
+/* header */
+.top{display:flex;align-items:center;justify-content:space-between;height:60px}
+.brand{display:flex;align-items:center;gap:14px}
+.brand img{width:54px;height:54px;border-radius:14px;box-shadow:0 6px 16px -6px rgba(211,17,69,.6)}
+.brand b{font-size:25px;letter-spacing:.14em;font-weight:700;color:var(--red)}
+.brand span{font-size:25px;letter-spacing:.14em;font-weight:500;color:var(--ink)}
+.tag{font-size:15px;font-weight:700;letter-spacing:.16em;color:var(--red);border:2px solid var(--red);border-radius:99px;padding:8px 18px}
+/* hero */
+.hero{display:grid;grid-template-columns:1fr 640px;gap:44px;margin-top:14px;height:262px}
+h1{font-size:54px;line-height:1.05;font-weight:700;letter-spacing:-.02em}
+h1 em{font-style:normal;color:var(--red)}
+.sub{margin-top:12px;font-size:19.5px;line-height:1.36;color:#3A3A3F;max-width:1120px}
+.sub b{color:var(--ink)}
+.flow{position:relative;border-radius:30px;background:linear-gradient(140deg,var(--wine),var(--deep) 40%,var(--red));color:#fff;padding:20px 26px;overflow:hidden;box-shadow:0 30px 50px -28px rgba(211,17,69,.8)}
+.flow:before{content:"";position:absolute;right:-90px;top:-90px;width:300px;height:300px;border-radius:50%;background:radial-gradient(circle,rgba(255,150,175,.55),transparent 65%)}
+.flow .k{font-size:13px;letter-spacing:.2em;font-weight:700;color:#FFC9D6}
+.flow .big{display:flex;align-items:baseline;gap:12px;margin-top:6px;position:relative}
+.flow .big strong{font-size:84px;line-height:.95;font-weight:700;letter-spacing:-.03em}
+.flow .big>span{font-size:24px;font-weight:600;color:#FFE3EA}
+.flow .big{align-items:center}
+.juno{margin-left:auto;display:flex;align-items:center;gap:10px;width:268px;padding:9px 12px;border-radius:20px;background:rgba(255,255,255,.95);color:var(--ink);box-shadow:0 14px 28px -12px rgba(0,0,0,.55);position:relative}
+.juno:after{content:"";position:absolute;inset:-4px;border-radius:24px;border:2px solid rgba(255,255,255,.45);animation:none}
+.juno img{width:46px;height:46px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 3px var(--blush)}
+.juno b{display:block;font-size:17px;font-weight:700;color:var(--red);line-height:1.1}
+.juno span{display:block;font-size:12.5px;font-weight:500;line-height:1.28;color:#3A3A3F;margin-top:2px}
+.juno i{font-style:normal;font-weight:700;color:var(--ink)}
+.wave{display:flex;align-items:center;gap:5px;height:44px;margin:8px 0 6px;position:relative}
+.wave i{display:block;width:6px;border-radius:3px;background:linear-gradient(#fff,#FFB3C6)}
+.wave .arrow{margin-left:8px;font-size:30px;color:#FFC9D6;line-height:1}
+.out{display:flex;flex-wrap:nowrap;gap:7px;position:relative}
+.out span{font-size:13px;white-space:nowrap;font-weight:700;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.35);border-radius:99px;padding:5px 10px;backdrop-filter:blur(2px)}
+/* middle panels */
+.mid{display:grid;grid-template-columns:1fr 1.18fr;gap:28px;margin-top:18px;height:356px}
+.panel{background:#fff;border-radius:28px;padding:18px 28px 14px;border:1.5px solid var(--line);position:relative;box-shadow:0 20px 40px -30px rgba(110,10,39,.45)}
+.panel:before{content:"";position:absolute;left:0;top:26px;bottom:26px;width:6px;border-radius:0 6px 6px 0;background:var(--red)}
+.ph{display:flex;align-items:baseline;gap:14px;margin-bottom:10px}
+.ph .n{font-size:13px;font-weight:700;letter-spacing:.2em;color:#fff;background:var(--red);border-radius:8px;padding:4px 10px}
+.ph h2{font-size:30px;font-weight:700;letter-spacing:-.01em}
+.ph p{margin-left:auto;font-size:15px;font-style:italic;color:var(--grey)}
+.list{display:grid;gap:8px}
+.it{display:grid;grid-template-columns:46px 1fr;gap:14px;align-items:center}
+.ic{width:46px;height:46px;border-radius:14px;background:var(--blush);display:grid;place-items:center}
+.ic svg{width:28px;height:28px;stroke:var(--red);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.it b{display:block;font-size:19px;font-weight:700;line-height:1.15}
+.it span{font-size:15.5px;color:#4A4A50;line-height:1.28;display:block}
+.grid6{display:grid;grid-template-columns:1fr 1fr;gap:15px 22px}
+.callout{margin-top:16px;border-radius:18px;background:linear-gradient(100deg,var(--blush),#fff);border:1.5px solid var(--line);padding:12px 18px;font-size:16.5px;line-height:1.35;color:#3A3A3F}
+.callout b{color:var(--red)}
+.grid6 .it{grid-template-columns:46px 1fr}
+/* market band */
+.mkt{position:absolute;left:0;right:0;bottom:0;height:300px;background:linear-gradient(160deg,var(--wine),var(--deep) 55%,#A30D36);color:#fff;padding:20px 56px 0;overflow:hidden}
+.mkt:before{content:"";position:absolute;left:-120px;bottom:-200px;width:700px;height:500px;border-radius:50%;background:radial-gradient(circle,rgba(211,17,69,.55),transparent 65%)}
+.mh{display:flex;align-items:center;gap:14px;position:relative}
+.mh .live{width:11px;height:11px;border-radius:50%;background:#7CFFB2;box-shadow:0 0 0 5px rgba(124,255,178,.25)}
+.mh b{font-size:14px;letter-spacing:.22em;font-weight:700}
+.mh span{font-size:20px;font-weight:600;color:#FFE3EA;margin-left:8px}
+.stats{display:grid;grid-template-columns:1fr 1fr 1fr 1.25fr;gap:18px;margin-top:14px;position:relative}
+.st{border-radius:22px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.22);padding:16px 20px;height:156px;backdrop-filter:blur(3px)}
+.st .v{font-size:52px;font-weight:700;line-height:1;letter-spacing:-.02em}
+.st .v small{font-size:26px;font-weight:700;margin-left:2px}
+.st p{margin-top:8px;font-size:15.5px;line-height:1.3;color:#FFE3EA}
+.st.hot{background:#fff;color:var(--ink);border:none;box-shadow:0 20px 40px -20px rgba(0,0,0,.5)}
+.st.hot .v{color:var(--red)}
+.st.hot p{color:#3A3A3F}
+.st.hot em{font-style:normal;font-weight:700;color:var(--red)}
+.foot{position:absolute;left:56px;right:56px;bottom:13px;display:flex;justify-content:space-between;gap:30px;font-size:11.5px;line-height:1.35;color:#F3B9C8}
+.foot b{color:#fff}
+</style></head><body>
+<div class="bg"></div>
+<div class="wrap">
+  <div class="top">
+    <div class="brand"><img src="__MASCOT__"><b>AIA</b><span>VOICE INSIGHTS</span></div>
+    <div class="tag">EXCO PRE-READ · ONE-SLIDE VIEW</div>
+  </div>
+
+  <div class="hero">
+    <div>
+      <h1>Agents spend the meeting listening and the evening typing.<br><em>Let’s give them the evening back.</em></h1>
+      <p class="sub">Whether on paper or keyed into i-PoS, today’s records are typed from memory, late and uneven. <b>Voice Insights is a next-generation system:</b> it turns the conversation itself into insight and ready-to-review paperwork, in four languages.</p>
+    </div>
+    <div class="flow">
+      <div class="k">FROM CONVERSATION TO READY-TO-REVIEW</div>
+      <div class="big"><strong>~30</strong><span>seconds</span>
+        <div class="juno"><img src="__MASCOT__"><div><b>Meet Juno</b><span>Your agent’s debrief partner. Just say <i>“Hey Juno.”</i></span></div></div></div>
+      <div class="wave" id="wave"><span class="arrow">➜</span></div>
+      <div class="out"><span>Suggestion + reasons</span><span>Fact-find</span><span>Record of advice</span><span>Follow-up</span><span>CRM note</span></div>
+    </div>
+  </div>
+
+  <div class="mid">
+    <div class="panel">
+      <div class="ph"><span class="n">SLIDE 1</span><h2>For our agents</h2><p>“Evenings back, better conversations.”</p></div>
+      <div class="list">
+        <div class="it"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></div><div><b>Time back to sell and serve</b><span>Drafts of every record to check, not re-type from memory</span></div></div>
+        <div class="it"><div class="ic"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg></div><div><b>Better conversations in the room</b><span>A live picture of family, hopes and worries, plus the next best question</span></div></div>
+        <div class="it"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l5 5M11 8v6M8 11h6"/></svg></div><div><b>Fewer missed needs</b><span>Gaps listed at once, so the next meeting starts sharper</span></div></div>
+        <div class="it"><div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5L16 9.5"/></svg></div><div><b>Safer, more confident advice</b><span>Risky promises flagged as they are made</span></div></div>
+        <div class="it"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg></div><div><b>Every customer, in their own language</b><span>English · 中文 · Bahasa Melayu · தமிழ்</span></div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="ph"><span class="n">SLIDE 2</span><h2>For AIA Singapore</h2><p>“Consistent, visible, compliant, at well under a dollar a conversation.”</p></div>
+      <div class="grid6">
+        <div class="it"><div class="ic"><svg viewBox="0 0 24 24"><path d="M3 17l5-5 4 3 8-9"/><path d="M15 6h5v5"/></svg></div><div><b>Productivity at scale</b><span>Hours returned across the whole agency force</span></div></div>
+        <div class="it"><div class="ic"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 12.5l3 3 5-6"/></svg></div><div><b>Consistent quality</b><span>One standard, whichever agent a customer meets</span></div></div>
+        <div class="it"><div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M12 8v5M12 16.2v.1"/></svg></div><div><b>Compliance caught early</b><span>Not weeks later in a file review</span></div></div>
+        <div class="it"><div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3v18M16.5 7.5C15.5 6 13.8 5.5 12 5.5c-2.2 0-4 1.1-4 3s1.8 2.7 4 3.2 4 1.2 4 3.2-1.8 3-4 3c-2 0-3.6-.7-4.6-2.2"/></svg></div><div><b>Revenue upside</b><span>Faster follow-up, fewer missed needs</span></div></div>
+        <div class="it"><div class="ic"><svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></div><div><b>Leadership visibility</b><span>Volume, needs, mood, risk and speed in one view</span></div></div>
+        <div class="it"><div class="ic"><svg viewBox="0 0 24 24"><path d="M12 20s-8-4.7-8-10.2A4.3 4.3 0 0 1 12 7a4.3 4.3 0 0 1 8 2.8C20 15.300 12 20 12 20z"/></svg></div><div><b>Brand and customer trust</b><span>A fuller record, faster multilingual service</span></div></div>
+      </div>
+      <div class="callout"><b>The bigger prize is beyond time saved:</b> one avoided conduct incident, or a small lift in conversion, can outweigh a year of hours returned.</div>
+    </div>
+  </div>
+</div>
+
+<div class="mkt">
+  <div class="mh"><i class="live"></i><b>WHY NOW · SINGAPORE MARKET SIGNALS</b><span>Advice is where growth is, and an agent’s time is the scarce asset.</span></div>
+  <div class="stats">
+    <div class="st"><div class="v">S$6.53<small>B</small></div><p><b>2025 weighted new-business premiums</b>, up 11.3% on 2024: a growing market to serve well</p></div>
+    <div class="st"><div class="v">+35.9<small>%</small></div><p><b>Adviser-channel premiums, H1 2026.</b> Advisers retake the lead at 37.3% share</p></div>
+    <div class="st"><div class="v">74<small>%</small></div><p><b>Critical-illness protection gap</b> (mortality 21%): S$952B of cover still missing, which better conversations can help close</p></div>
+    <div class="st hot"><div class="v">≈74,000<small> hrs</small></div><p><b>a month</b> if each of the <b>12,389</b> tied reps regained <b>6 hours</b>: about <em>460 full-time equivalents</em>. <i>Illustration; AIA’s own baseline comes first.</i></p></div>
+  </div>
+  <div class="foot">
+    <div><b>Sources:</b> LIA Singapore, 2025 industry results (S$6.53B, +11.3%) · Insurance Business Asia, H1 2026 channel results (S$1.35B, +35.9%, 37.3% share) · LIA Protection Gap Study 2022 (mortality S$373B, CI S$579B; latest published) · LIA, tied representatives at end-2025.</div>
+    <div>6 hrs = 8 cases × 45 min admin saved, a planning assumption to be measured.</div>
+  </div>
+</div>
+<script>
+const w=document.getElementById('wave');const hs=[10,18,30,16,38,24,12,34,20,42,28,14,36,22,10,30,18,40,26,12,32,20,14,28,16];
+hs.forEach(h=>{const i=document.createElement('i');i.style.height=h+'px';w.insertBefore(i,w.querySelector('.arrow'))});
+</script>
+</body></html>
