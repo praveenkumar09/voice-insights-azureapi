@@ -1,0 +1,88 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--red:#D31145;--deep:#6E0A27;--wine:#3B0516;--blush:#FCE8EE;--ink:#1D1D1F;--line:#EBD3DA}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px;overflow:hidden}
+body{font-family:"Avenir Next","Helvetica Neue",Arial,sans-serif;color:var(--ink);position:relative;-webkit-print-color-adjust:exact}
+.abs{position:absolute}
+.light{background:radial-gradient(1000px 700px at 100% -10%,rgba(211,17,69,.16),transparent 60%),radial-gradient(800px 600px at -5% 60%,rgba(211,17,69,.08),transparent 60%),#FFF8FA}
+.dark{background:radial-gradient(900px 700px at 15% 110%,rgba(211,17,69,.6),transparent 62%),linear-gradient(150deg,var(--wine),var(--deep) 55%,#A30D36);color:#fff}
+.hot{background:radial-gradient(900px 700px at 85% 0%,rgba(255,150,175,.55),transparent 60%),linear-gradient(140deg,var(--wine),var(--deep) 35%,var(--red));color:#fff}
+.kick{font-size:22px;font-weight:700;letter-spacing:.26em}
+h1{font-size:96px;line-height:1.02;font-weight:700;letter-spacing:-.025em}
+h1 em{font-style:normal;color:var(--red)} .dark h1 em,.hot h1 em{color:#FFB3C6}
+/* speaker pill */
+.pill{position:absolute;left:56px;bottom:44px;width:700px;height:96px;border-radius:48px;background:rgba(255,255,255,.96);box-shadow:0 18px 40px -16px rgba(0,0,0,.45);display:flex;align-items:center;gap:16px;padding:0 22px 0 10px}
+.pill img{width:76px;height:76px;border-radius:50%;object-fit:cover;object-position:40% 30%;box-shadow:0 0 0 4px var(--blush)}
+.pill b{font-size:24px;color:var(--red);font-weight:700;line-height:1}
+.pill small{display:block;font-size:15px;color:#6E6E73;margin-top:3px}
+.pill .slot{margin-left:auto;width:430px;height:70px}
+.mark{position:absolute;right:56px;top:44px;display:flex;align-items:center;gap:14px}
+.mark img{width:50px;height:50px;border-radius:13px}.mark b{font-size:24px;letter-spacing:.14em;color:var(--red)}.mark span{font-size:24px;letter-spacing:.14em;font-weight:500}
+.dark .mark b,.hot .mark b{color:#fff}
+/* generic cards */
+.card{background:#fff;border:1.5px solid var(--line);border-radius:30px;box-shadow:0 26px 50px -30px rgba(110,10,39,.5)}
+.row{display:flex;align-items:center;gap:24px;padding:12px 26px;border-radius:26px;background:#fff;border:1.5px solid var(--line);box-shadow:0 20px 40px -28px rgba(110,10,39,.45);opacity:0;transform:translateX(-40px)}
+.row.on{opacity:1;transform:none}
+.row .ic{width:68px;height:68px;border-radius:20px;background:var(--blush);display:grid;place-items:center;flex-shrink:0}
+.row svg{width:38px;height:38px;stroke:var(--red);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.row b{font-size:36px;font-weight:700;letter-spacing:-.01em;line-height:1.1}.row span{display:block;font-size:23px;color:#55555B;margin-top:2px}
+.dim{opacity:.0}
+.chip{display:inline-block;font-size:34px;font-weight:700;background:rgba(255,255,255,.15);border:2px solid rgba(255,255,255,.45);border-radius:99px;padding:14px 30px;margin:8px}
+.stat{border-radius:34px;padding:30px 30px;background:rgba(255,255,255,.1);border:1.5px solid rgba(255,255,255,.28);width:390px;height:380px;opacity:0;transform:translateY(40px)}
+.stat.on{opacity:1;transform:none}
+.stat .v{font-size:84px;font-weight:700;letter-spacing:-.03em;line-height:1}.stat .v small{font-size:40px}
+.stat p{font-size:26px;line-height:1.32;color:#FFE3EA;margin-top:16px}
+.stat.white{background:#fff;color:var(--ink);border:none;box-shadow:0 30px 60px -20px rgba(0,0,0,.55)}.stat.white .v{color:var(--red)}.stat.white p{color:#3A3A3F}
+</style></head><body>
+<div id="root"></div>
+<script>
+const q=Object.fromEntries(new URLSearchParams(location.search));const S=+q.s,K=+q.k;
+const ICON={
+clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+chat:'<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/>',
+find:'<circle cx="11" cy="11" r="6.5"/><path d="M16 16l5 5M11 8v6M8 11h6"/>',
+shield:'<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5L16 9.5"/>',
+globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',
+up:'<path d="M3 17l5-5 4 3 8-9"/><path d="M15 6h5v5"/>',
+check:'<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 12.5l3 3 5-6"/>',
+warn:'<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M12 8v5M12 16.2v.1"/>',
+dollar:'<path d="M12 3v18M16.5 7.5C15.5 6 13.8 5.5 12 5.5c-2.2 0-4 1.1-4 3s1.8 2.7 4 3.2 4 1.2 4 3.2-1.8 3-4 3c-2 0-3.6-.7-4.6-2.2"/>',
+eye:'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'};
+const row=(ic,t,s,on)=>`<div class="row ${on?'on':''}"><div class="ic"><svg viewBox="0 0 24 24">${ICON[ic]}</svg></div><div><b>${t}</b><span>${s}</span></div></div>`;
+const pill=(light)=>`<div class="pill"><img src="juno-avatar.png"><div><b>Juno</b><small>Your agent’s debrief partner</small></div><div class="slot"></div></div>`;
+const mark=`<div class="mark"><img src="vlogo.png"><b>AIA</b><span>VOICE INSIGHTS</span></div>`;
+const SIDE=`<div class="abs" style="right:90px;top:250px;width:440px"><img src="juno-mascot.png" style="width:440px;border-radius:36px;box-shadow:0 30px 60px -28px rgba(110,10,39,.6)"></div>`;
+let h='',cls='light';
+if(S==1&&K==1){cls='light';h=`<div class="abs" style="inset:0;background:url(hero.png) 0% 50%/cover"></div><div class="abs" style="inset:0;background:linear-gradient(90deg,rgba(255,248,250,0) 28%,rgba(255,248,250,.96) 62%)"></div>
+<div class="abs" style="left:1000px;top:250px;width:820px"><div class="kick" style="color:var(--red)">MEET JUNO</div><h1 style="margin-top:18px">Hi, I’m <em>Juno.</em></h1><p style="font-size:42px;line-height:1.3;margin-top:22px;color:#3A3A3F">Your agent’s debrief partner at <b>AIA Voice Insights</b>.</p></div>`+pill();}
+if(S==1&&K==2){cls='dark';h=`${mark}<div class="abs" style="left:110px;top:230px;width:1700px"><div class="kick" style="color:#FFB3C6">TODAY, AFTER EVERY MEETING</div><h1 style="margin-top:22px;font-size:128px">Agents spend the meeting <em>listening</em>…<br>and the evening <em>typing.</em></h1></div>`+pill();}
+if(S==2&&K==1){cls='light';h=`${mark}<div class="abs" style="left:110px;top:150px"><div class="kick" style="color:var(--red)">PAPER OR i-PoS, THE SAME STORY</div><h1 style="margin-top:16px;font-size:84px">Typed from memory.<br><em>Late. Uneven.</em></h1></div>
+<div class="abs card" style="left:1010px;top:200px;width:380px;height:300px;padding:36px;transform:rotate(-4deg)"><div style="font-size:30px;font-weight:700;color:var(--red)">PAPER NOTES</div><div style="margin-top:22px;height:12px;border-radius:6px;background:#E8DADF"></div><div style="margin-top:16px;height:12px;width:80%;border-radius:6px;background:#E8DADF"></div><div style="margin-top:16px;height:12px;width:90%;border-radius:6px;background:#E8DADF"></div><div style="margin-top:16px;height:12px;width:55%;border-radius:6px;background:#E8DADF"></div></div>
+<div class="abs card" style="left:1410px;top:260px;width:400px;height:300px;padding:36px;transform:rotate(3deg)"><div style="font-size:30px;font-weight:700;color:var(--red)">i-PoS ENTRY</div><div style="margin-top:22px;display:grid;gap:14px"><div style="height:42px;border-radius:10px;border:2px solid #E8DADF"></div><div style="height:42px;border-radius:10px;border:2px solid #E8DADF"></div><div style="height:42px;border-radius:10px;border:2px solid #E8DADF"></div></div></div>
+<div class="abs" style="left:1010px;top:640px;font-size:42px;font-weight:700;color:var(--red)">✎ from memory, after the meeting</div>`+pill();}
+if(S==2&&K==2){cls='hot';h=`${mark}<div class="abs" style="left:110px;top:250px;width:1700px"><div class="kick" style="color:#FFC9D6">THE IDEA</div><h1 style="margin-top:22px;font-size:140px">Let’s give them<br>the evening <em>back.</em></h1></div>
+<div class="abs" style="right:140px;top:300px;width:420px;height:420px;border-radius:50%;border:10px solid rgba(255,255,255,.5);display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:260px;height:260px;stroke:#fff;fill:none;stroke-width:1.2;stroke-linecap:round">${ICON.clock}</svg></div>`+pill();}
+if(S==3){cls='hot';
+ const chips=['Suggestion + reasons','Fact-find','Record of advice','Follow-up','CRM note'];
+ h=`${mark}<div class="abs" style="left:110px;top:120px"><div class="kick" style="color:#FFC9D6">CONVERSATION  ➜  READY-TO-REVIEW</div>
+ <div style="display:flex;align-items:baseline;gap:26px;margin-top:10px"><div style="font-size:340px;font-weight:700;letter-spacing:-.04em;line-height:1">~30</div><div style="font-size:84px;font-weight:600;color:#FFE3EA">seconds</div></div></div>
+ <div class="abs" style="left:110px;top:560px;width:1700px;opacity:${K>=2?1:0}">${chips.map(c=>`<span class="chip">${c}</span>`).join('')}</div>
+ <div class="abs" style="left:110px;top:780px;font-size:46px;font-weight:700;opacity:${K>=3?1:0}">English  ·  中文  ·  Bahasa Melayu  ·  தமிழ்</div>`+pill();}
+if(S==4){cls='light';const it=[['clock','Time back to sell','Drafts to check, not re-type'],['chat','Better conversations','A live picture + the next best question'],['find','Fewer missed needs','Gaps listed at once'],['shield','Safer advice','Risky promises flagged as made'],['globe','Their own language','English · 中文 · Melayu · தமிழ்']];
+ h=`${mark}<div class="abs" style="left:110px;top:90px"><div class="kick" style="color:var(--red)">FOR OUR AGENTS</div><h1 style="font-size:78px;margin-top:6px">Evenings back. <em>Better conversations.</em></h1></div>
+ <div class="abs" style="left:110px;top:290px;width:1250px;display:grid;gap:14px">${it.map((x,i)=>row(x[0],x[1],x[2],i<K)).join('')}</div>`+SIDE+pill();}
+if(S==5){cls='light';const it=[['up','Productivity at scale','Hours returned across the agency force'],['check','Consistent quality','One standard, whichever agent'],['warn','Compliance caught early','Not weeks later in a file review'],['dollar','Revenue upside','Faster follow-up, fewer missed needs'],['eye','Leadership visibility','Volume, needs, mood, risk, speed']];
+ h=`${mark}<div class="abs" style="left:110px;top:90px"><div class="kick" style="color:var(--red)">FOR AIA SINGAPORE</div><h1 style="font-size:78px;margin-top:6px">Consistent. Visible. <em>Compliant.</em></h1></div>
+ <div class="abs" style="left:110px;top:290px;width:1250px;display:grid;gap:14px">${it.map((x,i)=>row(x[0],x[1],x[2],i<K)).join('')}</div>`+SIDE+pill();}
+if(S==6){cls='dark';
+ h=`${mark}<div class="abs" style="left:110px;top:100px"><div class="kick" style="color:#FFB3C6">WHY NOW · SINGAPORE MARKET SIGNALS</div><h1 style="font-size:76px;margin-top:8px">Advice is where growth is.</h1></div>
+ <div class="abs" style="left:110px;top:330px;display:flex;gap:28px">
+ <div class="stat on"><div class="v">S$6.53<small>B</small></div><p><b>2025 weighted new-business premiums,</b> up 11.3%</p></div>
+ <div class="stat ${K>=1?'on':''}"><div class="v">+35.9<small>%</small></div><p><b>Adviser-channel premiums,</b> H1 2026. Advisers retake the lead</p></div>
+ <div class="stat ${K>=2?'on':''}"><div class="v">74<small>%</small></div><p><b>Critical-illness protection gap.</b> Cover still missing</p></div>
+ <div class="stat white ${K>=3?'on':''}" style="width:450px"><div class="v">≈74,000<small> hrs</small></div><p><b>a month</b> if 12,389 tied reps regain 6 hours. <i>Illustration; AIA’s baseline first.</i></p></div></div>`+pill();}
+if(S==7){cls='hot';h=` <div class="abs" style="left:0;right:0;top:130px;text-align:center"><img src="juno-mascot.png" style="width:440px;height:440px;object-fit:cover;object-position:35% 40%;border-radius:50%;box-shadow:0 0 0 14px rgba(255,255,255,.2),0 40px 80px -20px rgba(0,0,0,.5)"></div>
+ <div class="abs" style="left:0;right:0;top:640px;text-align:center"><div class="kick" style="color:#FFC9D6">NEXT STEP: MEASURE WITH AIA’S OWN NUMBERS</div><h1 style="font-size:150px;margin-top:10px">“Hey <em>Juno.</em>”</h1>
+ <div style="margin-top:20px;font-size:34px;letter-spacing:.14em;font-weight:600;opacity:${K>=2?1:0}">AIA <span style="font-weight:400">VOICE INSIGHTS</span></div></div>`;}
+document.body.className=cls;document.getElementById('root').innerHTML=h;
+</script></body></html>

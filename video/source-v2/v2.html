@@ -1,0 +1,198 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Juno v2</title>
+<script src="timeline.js"></script>
+<style>
+:root{--red:#D31145;--deep:#6E0A27;--wine:#3B0516;--blush:#FCE8EE;--ink:#1D1D1F;--line:#EBD3DA}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px;overflow:hidden;background:#FFF8FA}
+body{font-family:"Avenir Next","Helvetica Neue",Arial,sans-serif;color:var(--ink);position:relative}
+.abs{position:absolute}
+.bg{position:absolute;inset:0;opacity:0}
+.bg.light{background:radial-gradient(1000px 700px at 100% -10%,rgba(211,17,69,.18),transparent 60%),radial-gradient(800px 600px at -5% 60%,rgba(211,17,69,.09),transparent 60%),#FFF8FA}
+.bg.soft{background:radial-gradient(900px 700px at 90% 100%,rgba(211,17,69,.2),transparent 60%),linear-gradient(160deg,#FFF8FA,#FDE7EE)}
+.bg.dark{background:radial-gradient(900px 700px at 15% 110%,rgba(211,17,69,.6),transparent 62%),linear-gradient(150deg,var(--wine),var(--deep) 55%,#A30D36)}
+.bg.hot{background:radial-gradient(900px 700px at 85% 0%,rgba(255,150,175,.55),transparent 60%),linear-gradient(140deg,var(--wine),var(--deep) 35%,var(--red))}
+.bg.hero{background:url(hero.png) 0% 50%/cover}
+.heroveil{background:linear-gradient(90deg,rgba(255,248,250,0) 20%,rgba(255,248,250,.97) 58%)}
+.bokeh{position:absolute;border-radius:50%;background:radial-gradient(circle,rgba(211,17,69,.22),transparent 65%)}
+.kick{font-size:22px;font-weight:700;letter-spacing:.26em}
+h1{font-size:92px;line-height:1.03;font-weight:700;letter-spacing:-.025em}
+h1 em{font-style:normal;color:var(--red)}
+.onD h1 em{color:#FFB3C6}
+.layer{position:absolute;left:0;top:0;width:1920px;height:1080px;opacity:0}
+.onD em{color:#FFB3C6!important}
+.stage{position:absolute;left:660px;top:70px;width:1200px;height:820px}
+.mark{position:absolute;right:56px;top:36px;display:flex;align-items:center;gap:14px;z-index:5}
+.mark img{width:46px;height:46px;border-radius:12px}.mark b{font-size:22px;letter-spacing:.14em;color:var(--red)}.mark span{font-size:22px;letter-spacing:.14em;font-weight:500;color:var(--mc,#1D1D1F)}
+.mark b{color:var(--mc2,var(--red))}
+/* rows */
+.row{position:absolute;left:0;width:1160px;display:flex;align-items:center;gap:24px;padding:12px 26px;border-radius:26px;background:#fff;border:1.5px solid var(--line);box-shadow:0 20px 40px -28px rgba(110,10,39,.45);opacity:0}
+.row .ic{width:72px;height:72px;border-radius:20px;background:var(--blush);display:grid;place-items:center;flex-shrink:0}
+.row svg{width:40px;height:40px;stroke:var(--red);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.row b{font-size:38px;font-weight:700;letter-spacing:-.01em;line-height:1.1;display:block}.row span{display:block;font-size:24px;color:#55555B;margin-top:3px}
+.chip{position:absolute;font-size:34px;font-weight:700;background:rgba(255,255,255,.15);border:2px solid rgba(255,255,255,.5);border-radius:99px;padding:14px 30px;color:#fff;opacity:0;white-space:nowrap}
+.tile{position:absolute;border-radius:34px;padding:30px 32px;background:rgba(255,255,255,.1);border:1.5px solid rgba(255,255,255,.28);width:570px;height:300px;opacity:0;color:#fff}
+.tile .v{font-size:104px;font-weight:700;letter-spacing:-.03em;line-height:1}.tile .v small{font-size:50px}
+.tile p{font-size:27px;line-height:1.32;color:#FFE3EA;margin-top:14px}
+.tile.white{background:#fff;color:var(--ink);border:none;box-shadow:0 30px 60px -20px rgba(0,0,0,.55)}.tile.white .v{color:var(--red)}.tile.white p{color:#3A3A3F}
+.card{background:#fff;border:1.5px solid var(--line);border-radius:30px;box-shadow:0 26px 50px -30px rgba(110,10,39,.5)}
+/* Juno */
+#juno{position:absolute;left:0;top:0;width:580px;height:450px;transform-origin:0 0;z-index:10}
+.halo{position:absolute;left:-90px;top:-70px;width:760px;height:620px;border-radius:50%;background:radial-gradient(circle,rgba(255,60,110,.55),rgba(211,17,69,.18) 45%,transparent 68%)}
+.frame{position:absolute;inset:0;border-radius:44px;overflow:hidden;border:7px solid #fff;box-shadow:0 40px 80px -30px rgba(110,10,39,.7),0 0 0 2px rgba(211,17,69,.25)}
+.frame img{position:absolute;left:0;top:0;width:580px;height:450px;max-width:none}
+.eyecov{position:absolute;background:radial-gradient(ellipse at center,#050507 62%,rgba(5,5,7,0) 78%);opacity:0}
+.eyeline{position:absolute;height:5px;border-radius:3px;background:#fff;box-shadow:0 0 8px #ff3b6b,0 0 16px #ff3b6b;opacity:0}
+.mouth{position:absolute;left:240px;top:218px;width:34px;height:5px;border-radius:12px;background:#fff;box-shadow:0 0 6px #ff3b6b,0 0 14px #ff3b6b;transform:rotate(-8deg);transform-origin:center}
+.orbpulse{position:absolute;left:36px;top:256px;width:90px;height:90px;border-radius:50%;background:radial-gradient(circle,rgba(255,60,110,.8),transparent 68%);opacity:0}
+.tag{position:absolute;left:0;right:0;bottom:-58px;display:flex;justify-content:center}
+.tag div{display:flex;align-items:center;gap:12px;background:#fff;border-radius:99px;padding:9px 24px 9px 16px;box-shadow:0 14px 30px -14px rgba(110,10,39,.5);font-size:23px;font-weight:700;color:var(--red)}
+.tag i{width:14px;height:14px;border-radius:50%;background:var(--red);box-shadow:0 0 0 5px rgba(211,17,69,.2)}
+.tag small{font-size:17px;font-weight:500;color:#6E6E73}
+/* captions */
+#cap{position:absolute;left:60px;right:60px;bottom:36px;z-index:20;display:flex;justify-content:center;opacity:0}
+#cap div.box{max-width:1500px;background:rgba(255,255,255,.96);border-radius:38px;padding:16px 34px;box-shadow:0 20px 44px -18px rgba(0,0,0,.45);font-size:35px;line-height:1.28;font-weight:500;color:#6E6E73;text-align:center;display:flex;gap:22px;align-items:center}
+#cap .w{transition:none}
+#eq{display:flex;gap:4px;align-items:center;height:44px;flex-shrink:0}#eq i{display:block;width:6px;border-radius:3px;background:var(--red);height:8px}
+</style></head><body>
+<div id="bgs"></div>
+<div id="bok"></div>
+<div class="layer heroLay">
+  <div class="abs" id="heroText" style="left:1040px;top:260px;width:800px;opacity:0"><div class="kick" style="color:var(--red)">MEET JUNO</div><h1 style="margin-top:16px;font-size:110px">Hi, I’m <em>Juno.</em></h1><p style="font-size:40px;line-height:1.3;margin-top:20px;color:#3A3A3F">Your agent’s debrief partner at <b>AIA Voice Insights</b>.</p></div></div>
+<div class="mark" id="mark"><img src="vlogo.png"><b>AIA</b><span>VOICE INSIGHTS</span></div>
+<div id="stages"></div>
+<div id="closeLay" class="layer"><div class="abs" style="left:0;right:0;top:640px;text-align:center;color:#fff"><div class="kick" style="color:#FFC9D6" id="clK">NEXT STEP: PROVE IT WITH AIA’S OWN NUMBERS</div><h1 style="font-size:150px;margin-top:6px" id="clH">“Hey <em style="color:#FFB3C6">Juno.</em>”</h1><div style="margin-top:6px;font-size:34px;letter-spacing:.14em;font-weight:600" id="clB">AIA <span style="font-weight:400">VOICE INSIGHTS</span></div></div></div>
+<div id="juno"><div class="halo" id="halo"></div><div class="frame"><img src="juno-mascot.png"><div class="orbpulse" id="orb"></div>
+ <div class="eyecov" id="ecL" style="left:176px;top:166px;width:86px;height:62px"></div><div class="eyecov" id="ecR" style="left:276px;top:146px;width:64px;height:62px"></div>
+ <div class="eyeline" id="elL" style="left:196px;top:198px;width:48px;transform:rotate(-6deg)"></div><div class="eyeline" id="elR" style="left:292px;top:180px;width:34px;transform:rotate(-8deg)"></div>
+ <div class="mouth" id="mouth"></div></div>
+ <div class="tag" id="jtag"><div><i></i>Juno <small>your agent’s debrief partner</small></div></div></div>
+<div id="cap"><div class="box"><div id="eq"></div><div id="capt"></div></div></div>
+<script>
+const TL=window.TL,B=TL.beats,ENV=TL.env;
+const $=id=>document.getElementById(id);
+const clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const sm=x=>{x=clamp(x);return x*x*(3-2*x)};
+const outC=x=>1-Math.pow(1-clamp(x),3);
+const back=x=>{x=clamp(x);const c=1.70158;return 1+(c+1)*Math.pow(x-1,3)+c*Math.pow(x-1,2)};
+const lerp=(a,b,k)=>a+(b-a)*k;
+const bt=id=>B.find(b=>b.id===id);
+const env=t=>{const i=t*TL.envFps;const a=ENV[Math.floor(i)]||0,b=ENV[Math.floor(i)+1]||0;return lerp(a,b,i%1)};
+const ICON={clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',chat:'<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/>',find:'<circle cx="11" cy="11" r="6.5"/><path d="M16 16l5 5M11 8v6M8 11h6"/>',shield:'<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5L16 9.5"/>',globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',up:'<path d="M3 17l5-5 4 3 8-9"/><path d="M15 6h5v5"/>',check:'<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 12.5l3 3 5-6"/>',warn:'<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M12 8v5M12 16.2v.1"/>',dollar:'<path d="M12 3v18M16.5 7.5C15.5 6 13.8 5.5 12 5.5c-2.2 0-4 1.1-4 3s1.8 2.7 4 3.2 4 1.2 4 3.2-1.8 3-4 3c-2 0-3.6-.7-4.6-2.2"/>',eye:'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'};
+// ---------- backgrounds (crossfaded) ----------
+const BGS=[['light',0,5.3],['dark',5.3,10.95],['light',10.95,16.1],['hot',16.1,18.55],['dark',18.55,30.1],['light',30.1,48.5],['soft',48.5,62.4],['dark',62.4,80.3],['hot',80.3,99]];
+BGS.forEach((b,i)=>{const d=document.createElement('div');d.className='bg '+b[0];d.id='bg'+i;$('bgs').appendChild(d)});
+for(let i=0;i<9;i++){const d=document.createElement('div');d.className='bokeh';const s=120+((i*97)%220);d.style.cssText=`width:${s}px;height:${s}px;left:${(i*233)%1800}px;top:${(i*151)%900}px;opacity:.55`;d.dataset.p=i;$('bok').appendChild(d)}
+// ---------- stage builders ----------
+const stages={};
+function mk(id,html,w=1200,h=820){const d=document.createElement('div');d.className='stage layerS'+(['s2','s4','s5','mk'].includes(id)?' onD':'');d.id=id;d.style.opacity=0;d.innerHTML=html;$('stages').appendChild(d);return d}
+// B02 listening / typing
+stages.s2=mk('s2',`<div class="kick" style="color:#FFB3C6">TODAY, AFTER EVERY MEETING</div>
+<div id="s2a" class="abs" style="left:0;top:110px;display:flex;align-items:center;gap:36px;opacity:0"><div id="ear" style="display:flex;gap:9px;align-items:center;height:150px;width:190px">${'<i style="display:block;width:16px;border-radius:8px;background:#FFB3C6"></i>'.repeat(7)}</div><h1 style="color:#fff">The meeting:<br><em>listening</em></h1></div>
+<div id="s2b" class="abs" style="left:0;top:430px;display:flex;align-items:center;gap:36px;opacity:0"><div id="kb" style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;width:190px">${'<i style="display:block;height:34px;border-radius:8px;background:rgba(255,255,255,.28)"></i>'.repeat(18)}</div><h1 style="color:#fff">The evening:<br><em>typing</em></h1></div>`);
+// B03 paper / ipos
+stages.s3=mk('s3',`<div class="kick" style="color:var(--red)">PAPER OR i-PoS, THE SAME STORY</div>
+<div id="s3p" class="abs card" style="left:20px;top:110px;width:520px;height:370px;padding:40px;opacity:0"><div style="font-size:32px;font-weight:700;color:var(--red)">PAPER NOTES</div>${[100,80,92,60,85].map(w=>`<div style="margin-top:20px;height:14px;width:${w}%;border-radius:7px;background:#E8DADF"></div>`).join('')}</div>
+<div id="s3i" class="abs card" style="left:620px;top:150px;width:540px;height:370px;padding:40px;opacity:0"><div style="font-size:32px;font-weight:700;color:var(--red)">i-PoS ENTRY</div><div style="margin-top:22px;display:grid;gap:16px">${'<div style="height:50px;border-radius:12px;border:2px solid #E8DADF"></div>'.repeat(4)}</div></div>
+<div id="s3m" class="abs" style="left:0;top:560px;font-size:58px;font-weight:700;opacity:0">✎ Typed <span style="color:var(--red)">from memory</span></div>
+<div id="s3l" class="abs" style="left:740px;top:580px;font-size:54px;font-weight:700;color:var(--red);border:6px solid var(--red);border-radius:16px;padding:6px 26px;transform:rotate(-6deg);opacity:0">LATE</div>
+<div id="s3u" class="abs" style="left:900px;top:690px;font-size:54px;font-weight:700;color:var(--red);border:6px solid var(--red);border-radius:16px;padding:6px 26px;transform:rotate(4deg);opacity:0">UNEVEN</div>`);
+// B04 clock
+stages.s4=mk('s4',`<svg id="clk" class="abs" style="left:350px;top:30px" width="440" height="440" viewBox="-110 -110 220 220"><circle r="100" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="5"/>${[...Array(12)].map((_,i)=>`<line x1="0" y1="-88" x2="0" y2="-97" stroke="#fff" stroke-width="${i%3?2:4}" transform="rotate(${i*30})"/>`).join('')}<line id="hh" x1="0" y1="0" x2="0" y2="-52" stroke="#fff" stroke-width="7" stroke-linecap="round"/><line id="mh" x1="0" y1="0" x2="0" y2="-78" stroke="#FFB3C6" stroke-width="5" stroke-linecap="round"/><circle r="7" fill="#fff"/></svg>
+<h1 id="s4t" class="abs" style="left:0;top:520px;width:1160px;text-align:center;color:#fff;font-size:84px;opacity:0">Let’s give them the<br>evening <em>back.</em></h1>`);
+// B05-06 thirty seconds
+const chips=['Suggestion + reasons','Fact-find','Record of advice','Follow-up','CRM note'];
+stages.s5=mk('s5',`<div class="kick" style="color:#FFC9D6">CONVERSATION  ➜  READY-TO-REVIEW</div>
+<div class="abs" style="left:0;top:40px;display:flex;align-items:baseline;gap:24px"><div id="n30" style="font-size:300px;font-weight:700;letter-spacing:-.04em;line-height:1;color:#fff">~0</div><div style="font-size:80px;font-weight:600;color:#FFE3EA">seconds</div></div>
+<div id="wv" class="abs" style="left:0;top:380px;display:flex;gap:6px;align-items:center;height:80px;width:1100px"></div>
+${chips.map((c,i)=>`<span class="chip" id="ch${i}" style="left:${[0,430,0,420,720][i]}px;top:${[500,500,590,590,590][i]}px">${c}</span>`).join('')}
+<div id="lang" class="abs" style="left:0;top:710px;font-size:48px;font-weight:700;color:#fff;opacity:0">English · 中文 · Bahasa Melayu · தமிழ்</div>`);
+// lists
+function rows(id,items,head,sub){return mk(id,`<div class="kick" style="color:var(--red)">${head}</div><h1 style="font-size:70px;margin-top:6px">${sub}</h1>`+items.map((x,i)=>`<div class="row" id="${id}r${i}" style="top:${170+i*128}px"><div class="ic"><svg viewBox="0 0 24 24">${ICON[x[0]]}</svg></div><div><b>${x[1]}</b><span>${x[2]}</span></div></div>`).join(''))}
+stages.ag=rows('ag',[['clock','Time back to sell','Review drafts, don’t re-type'],['chat','Better conversations','A live customer picture + next best question'],['find','Fewer missed needs','Gaps listed straight away'],['shield','Safer advice','Risky promises flagged as they’re made'],['globe','Every customer, their language','English · 中文 · Melayu · தமிழ்']],'FOR OUR AGENTS','Evenings back. <em>Better conversations.</em>');
+stages.ai=rows('ai',[['up','Productivity at scale','Hours returned across the whole agency force'],['check','Consistent quality','One standard, whichever agent'],['warn','Compliance caught early','Not weeks later in a file review'],['dollar','Revenue upside','Faster follow-up, fewer missed needs'],['eye','Leadership visibility','Volume, needs, mood and risk in one view']],'FOR AIA SINGAPORE','Consistent. Visible. <em>Compliant.</em>');
+// market
+stages.mk=mk('mk',`<div class="kick" style="color:#FFB3C6">WHY NOW · SINGAPORE MARKET SIGNALS</div><h1 style="font-size:70px;margin-top:6px;color:#fff">Advice is where growth is.</h1>
+<div class="tile" id="t0" style="left:0;top:190px"><div class="v">S$6.53<small>B</small></div><p><b>2025 weighted new-business premiums,</b> up 11.3%</p></div>
+<div class="tile" id="t1" style="left:600px;top:190px"><div class="v" id="v1">+0<small>%</small></div><p><b>Adviser-channel premiums,</b> H1 2026. Advisers retake the lead</p></div>
+<div class="tile" id="t2" style="left:0;top:520px"><div class="v" id="v2">0<small>%</small></div><p><b>Critical-illness protection gap.</b> Cover still missing, which better conversations can help close</p></div>
+<div class="tile white" id="t3" style="left:600px;top:520px"><div class="v" id="v3">≈0<small> hrs</small></div><p><b>a month</b> if 12,389 tied reps regain 6 hours. <i>Illustration; AIA’s baseline first.</i></p></div>`);
+// ---------- captions ----------
+const eq=$('eq');for(let i=0;i<7;i++){eq.appendChild(document.createElement('i'))}
+const wvEl=$('wv');for(let i=0;i<46;i++){const e=document.createElement('i');e.style.cssText='display:block;width:12px;border-radius:6px;background:linear-gradient(#fff,#FFB3C6);height:10px';wvEl.appendChild(e)}
+let lastBeat=-1;
+function setCaption(t){
+  const i=B.findIndex(b=>t>=b.t0-0.05&&t<=b.t1+0.35);const cap=$('cap');
+  if(i<0){cap.style.opacity=0;return}
+  const b=B[i];
+  if(i!==lastBeat){lastBeat=i;$('capt').innerHTML=b.text.split(' ').map(w=>`<span class="w">${w}</span>`).join(' ')}
+  const ws=$('capt').children;const k=clamp((t-b.t0)/(b.t1-b.t0))*ws.length;
+  for(let j=0;j<ws.length;j++){const on=j<=Math.floor(k);ws[j].style.color=on?(j===Math.floor(k)?'#D31145':'#1D1D1F'):'#9A9AA0'}
+  const e=env(t);[...eq.children].forEach((x,j)=>x.style.height=(8+e*34*(0.5+0.5*Math.sin(t*14+j*1.7)**2))+'px');
+  cap.style.opacity=clamp((t-(b.t0-0.05))/0.15)*(1-clamp((t-(b.t1+0.2))/0.15))
+}
+// ---------- main render ----------
+const D=(a,b)=>[a,b];
+function frac(id,f){const b=bt(id);return b.t0+(b.t1-b.t0)*f}
+function layerOp(t,a,b,fi=.4,fo=.4){return clamp((t-a)/fi)*(1-clamp((t-(b-fo))/fo))}
+function pop(el,t,t0,dx=0,dy=30){const k=back(clamp((t-t0)/.55));const o=clamp((t-t0)/.25);el.style.opacity=o;el.style.transform=`translate(${(1-k)*dx}px,${(1-k)*dy}px) scale(${.92+.08*k})`}
+function R(t){
+  // backgrounds
+  BGS.forEach((b,i)=>{const prev=i===0?0:.5;$('bg'+i).style.opacity=clamp((t-(b[1]-.25))/.5)*(i<BGS.length-1?1-clamp((t-(b[2]-.25))/.5)*1:1)});
+  document.querySelectorAll('.bokeh').forEach(d=>{const p=+d.dataset.p;d.style.transform=`translate(${Math.sin(t*.3+p)*40}px,${Math.cos(t*.25+p*1.3)*50}px)`});
+  const e=env(t);
+  // hero layer (b01)
+  const b1=bt('b01'),b2=bt('b02');const heroOn=1-sm((t-(b1.t1-.1))/.7);
+  document.querySelector('.heroLay').style.opacity=heroOn;
+  pop($('heroText'),t,.45,40,0);
+  $('mark').style.opacity=sm((t-4)/.6)*(t<80.3?1:1-sm((t-80.3)/.5));
+  const dk=[[5.3,10.95],[16.1,18.55],[18.55,30.1],[62.4,80.3]].some(r=>t>=r[0]&&t<r[1]);$('mark').style.setProperty('--mc',dk?'#fff':'#1D1D1F');$('mark').style.setProperty('--mc2',dk?'#fff':'#D31145');
+  // stages
+  const win=[['s2','b02','b02'],['s3','b03','b03'],['s4','b04','b04'],['s5','b05','b06'],['ag','b07','b10'],['ai','b11','b13'],['mk','b14','b15']];
+  win.forEach(([id,a,b])=>{const st=stages[id];st.style.opacity=layerOp(t,bt(a).t0-.2,bt(b).t1+.15,.45,.45)});
+  // s2
+  {const a=bt('b02'),s=a.t0;pop($('s2a'),t,s+.2,-60,0);pop($('s2b'),t,frac('b02',.55),-60,0);
+   [...$('ear').children].forEach((x,j)=>x.style.height=(20+(t>s?1:0)*(30+70*Math.abs(Math.sin(t*5+j*.9)))*(t<frac('b02',.55)?1:.35))+'px');
+   const typing=t>frac('b02',.55);[...$('kb').children].forEach((x,j)=>{const on=typing&&((Math.floor(t*9)+j*7)%5===0);x.style.background=on?'#FFB3C6':'rgba(255,255,255,.28)'})}
+  // s3
+  {const s=bt('b03').t0;pop($('s3p'),t,s+.1,-80,0);$('s3p').style.transform+=' rotate(-4deg)';pop($('s3i'),t,s+.5,80,0);$('s3i').style.transform+=' rotate(3deg)';
+   pop($('s3m'),t,frac('b03',.35),0,20);pop($('s3l'),t,frac('b03',.6),0,-40);pop($('s3u'),t,frac('b03',.82),0,-40);
+   const w=n=>n; }
+  // s4
+  {const a=bt('b04');const k=outC((t-a.t0)/(a.t1-a.t0+.3));$('hh').setAttribute('transform',`rotate(${lerp(300,150,k)})`);$('mh').setAttribute('transform',`rotate(${lerp(-1800,0,k)})`);
+   pop($('s4t'),t,a.t0+.3,0,40);$('clk').style.transform=`scale(${1+.04*Math.sin(t*3)})`}
+  // s5
+  {const a=bt('b05');const k=outC((t-a.t0-.4)/2.2);$('n30').textContent='~'+Math.round(30*k);
+   [...wvEl.children].forEach((x,j)=>x.style.height=(10+e*(60*Math.abs(Math.sin(t*7+j*.55))+14))+'px');
+   const f=[.04,.2,.38,.55,.7];chips.forEach((c,i)=>pop($('ch'+i),t,frac('b06',f[i]),0,30));pop($('lang'),t,frac('b06',.82),0,24)}
+  // lists
+  const L=(id,beatTimes)=>beatTimes.forEach((tt,i)=>pop($(id+'r'+i),t,tt,-120,0));
+  L('ag',[bt('b07').t0+.25,bt('b08').t0+.2,bt('b09').t0+.2,frac('b09',.5),bt('b10').t0+.1]);
+  L('ai',[bt('b11').t0+.4,bt('b12').t0+.1,frac('b12',.5),bt('b13').t0+.1,frac('b13',.5)]);
+  // market
+  {pop($('t0'),t,bt('b14').t0+.2,0,40);pop($('t1'),t,frac('b14',.25),0,40);pop($('t2'),t,frac('b14',.58),0,40);pop($('t3'),t,bt('b15').t0+.1,0,40);
+   $('v1').innerHTML='+'+(35.9*outC((t-frac('b14',.25))/1.2)).toFixed(1)+'<small>%</small>';
+   $('v2').innerHTML=Math.round(74*outC((t-frac('b14',.58))/1.2))+'<small>%</small>';
+   $('v3').innerHTML='≈'+Math.round(74000*outC((t-bt('b15').t0-.2)/2.0)).toLocaleString('en-US')+'<small> hrs</small>'}
+  // close
+  const b16=bt('b16');const cl=sm((t-(b16.t0-.5))/.7);$('closeLay').style.opacity=cl;
+  $('clK').style.opacity=sm((t-b16.t0)/.4);$('clH').style.opacity=sm((t-b16.t0-.2)/.4);$('clB').style.opacity=sm((t-b16.t0-.8)/.4);
+  // Juno placement
+  const S_HERO=1.35,S_TILE=0.86,S_CLOSE=1.0;
+  const pos={hero:{x:120,y:210,s:S_HERO},tile:{x:70,y:250,s:S_TILE},close:{x:(1920-580*S_CLOSE)/2,y:90,s:S_CLOSE}};
+  const k1=sm((t-(b1.t1-.1))/.9),k2=sm((t-(b16.t0-.6))/.9);
+  const mix=(a,b,k)=>({x:lerp(a.x,b.x,k),y:lerp(a.y,b.y,k),s:lerp(a.s,b.s,k)});
+  const p=mix(mix(pos.hero,pos.tile,k1),pos.close,k2);
+  const bob=Math.sin(t*1.7)*7,rot=Math.sin(t*1.1)*1.1;
+  $('juno').style.transform=`translate(${p.x}px,${p.y+bob}px) rotate(${rot}deg) scale(${p.s*(1+.022*e)})`;
+  $('halo').style.opacity=.35+.65*e;$('halo').style.transform=`scale(${1+e*.12})`;
+  $('jtag').style.opacity=1-k2;
+  // face
+  const talking=B.some(b=>t>=b.t0-.05&&t<=b.t1+.1);const m=talking?Math.pow(e,.7):0;
+  const mo=$('mouth');mo.style.width=(30+34*m)+'px';mo.style.height=(5+26*m)+'px';mo.style.left=(240-(17*m))+'px';mo.style.borderRadius=(10+6*m)+'px';
+  $('orb').style.opacity=.2+.8*e;$('orb').style.transform=`scale(${1+e*.35})`;
+  const ph=(t-1.7)%3.4;const bl=ph<0.18?Math.sin(ph/0.18*Math.PI):0;
+  ['ecL','ecR'].forEach(id=>$(id).style.opacity=clamp(bl*1.4));['elL','elR'].forEach(id=>$(id).style.opacity=clamp(bl*1.4));
+  setCaption(t);
+}
+window.R=R;R(0);
+</script></body></html>

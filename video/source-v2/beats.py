@@ -1,0 +1,18 @@
+BEATS=[
+("b01","Hi, I'm Juno, your agent's debrief partner at AIA Voice Insights."),
+("b02","Here's the problem. Agents spend the meeting listening... and the evening typing."),
+("b03","On paper or i-PoS, it's all typed from memory. Late, and uneven."),
+("b04","So let's give them the evening back."),
+("b05","I listen to the conversation and, in about thirty seconds, draft everything."),
+("b06","The suggestion, fact-find, record of advice, follow-up and CRM note, in four languages."),
+("b07","For agents: time back to sell. They review drafts instead of re-typing."),
+("b08","Better conversations, with a live picture of the customer and the next best question."),
+("b09","Fewer missed needs, and safer advice, with risky promises flagged as they're made."),
+("b10","In every customer's own language."),
+("b11","For AIA Singapore: productivity at scale, across the whole agency force."),
+("b12","Consistent quality, and compliance caught early, not weeks later."),
+("b13","Revenue upside, and leadership visibility in one view."),
+("b14","And the timing is right: adviser premiums are up thirty-six percent, and seventy-four percent of critical illness cover is still missing."),
+("b15","Six hours back per rep is about seventy-four thousand hours a month. An illustration, to prove with AIA's own numbers."),
+("b16","Let's prove it together. Just say... Hey Juno."),
+]
