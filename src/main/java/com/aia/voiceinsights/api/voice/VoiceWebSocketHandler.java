@@ -87,8 +87,12 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     @Value("${AZURE_OPENAI_API_KEY:}")
     private String azureApiKey;
 
+    private final com.aia.voiceinsights.api.service.TranscriptRepairService repairService;
+
     public VoiceWebSocketHandler(CustomerProfileStore profileStore, ProfileExtractionService extractionService,
-                                 LiveCopilotService copilotService) {
+                                 LiveCopilotService copilotService,
+                                 com.aia.voiceinsights.api.service.TranscriptRepairService repairService) {
+        this.repairService = repairService;
         this.profileStore = profileStore;
         this.extractionService = extractionService;
         this.copilotService = copilotService;
@@ -201,6 +205,17 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
      * planning"), which then flow into the profile. With nothing to build on, noise yields at most a stray word. Names are
      * checked by the advisor on the review screen instead.
      */
+    /**
+     * What a Singapore advisor really sounds like: English with a Mandarin, Malay or Tamil word dropped in. Given nothing, the speech
+     * model writes those words as English look-alikes ("女儿" as "newer", "退休" as "Tuchel") or drops them; told to keep each word
+     * in its own language it gets them right, and a few worked examples (not a vocabulary list, which seeded invented sentences from
+     * noise: measured) keep short segments right too. No names or topics here (see above): they would let noise turn into notes. The
+     * transcription client is stricter about confidence whenever this sentence is in the prompt.
+     */
+    static final String MIXED_LANGUAGE_HINT = "Singapore English with a few Mandarin, Malay or Tamil words mixed in. "
+            + "Write each word in the language it was spoken in, and never translate. "
+            + "For example: 女儿 (daughter), 退休 (retirement), 保险 (insurance), 不过 (but), isteri (wife), anak (child), amma (mother), pillai (child).";
+
     private String promptFor(VoiceSession vs, String dynamic) {
         // Ask mode is also where Juno mode listens: the assistant's name is given so "Hey Juno" is spelled, not heard as "you know".
         if ("ASK".equals(vs.profile.getCaptureMode())) {
@@ -215,7 +230,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             return transcriptionPrompt((name + (dynamic == null ? "" : dynamic)).trim());
         }
         if (!"JUNO_DEBRIEF".equals(vs.profile.getCaptureMode())) return transcriptionPrompt(dynamic);
-        if ("en".equals(vs.lang)) return "";
+        if ("en".equals(vs.lang)) return MIXED_LANGUAGE_HINT;
         return "The advisor is speaking " + com.aia.voiceinsights.api.service.JunoPhrases.of(vs.lang).language()
                 + " (they may mix in English words). Transcribe in the language spoken.";
     }
@@ -255,6 +270,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         final AzureOpenAiRealtimeTranscriptionClient[] self = new AzureOpenAiRealtimeTranscriptionClient[1];
         vs.transcriptionClient = self[0] = new AzureOpenAiRealtimeTranscriptionClient(realtimeUrl, azureApiKey, transcriptionModel,
                 old != null && old.currentPrompt() != null ? old.currentPrompt() : promptFor(vs, ""),
+                old != null ? old.sequencer() : vs.sequencer, // a replacement connection keeps the same order of speech
                 new AzureOpenAiRealtimeTranscriptionClient.Listener() {
                     @Override
                     public void onPartialTranscript(String text) {
@@ -274,6 +290,11 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                     @Override
                     public void onFinalTranscript(String raw) {
                         String text = redact(ChineseScript.toSimplified(raw)); // ID and card numbers are never stored or shown
+                        // Words the speech model got wrong for want of context (Mandarin/Malay/Tamil words, 她/他) are fixed here; this
+                        // runs on the in-order delivery thread, so it cannot reorder anything, and it is time-boxed.
+                        if (!"ASK".equals(vs.profile.getCaptureMode()) && !vs.profile.getCaptureMode().equals("JUNO")) {
+                            text = redact(ChineseScript.toSimplified(repairService.repair(vs.transcript.toString(), text)));
+                        }
                         // A debrief with Juno in English: a line in another script (Tamil, Chinese...) is the speech model
                         // inventing words from background noise, not the advisor. It is dropped before anything reads it.
                         // In every mode: a script nobody here speaks (Arabic, Cyrillic, Thai, Korean...) is invented from noise.
@@ -590,6 +611,8 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         volatile boolean copilotDirty = false;
         final LiveCopilotService.State copilotState;
         final boolean debrief;
+        /** Keeps the transcripts of this session in the order the speech was cut, across any replaced Azure connection. */
+        final TranscriptSequencer sequencer = new TranscriptSequencer();
         final List<LiveInsightsSnapshot.SignalPoint> signalHistory = new ArrayList<>();
         final java.util.concurrent.atomic.AtomicBoolean copilotRunning = new java.util.concurrent.atomic.AtomicBoolean(false);
         final StringBuilder transcript = new StringBuilder();

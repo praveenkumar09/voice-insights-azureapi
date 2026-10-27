@@ -17,6 +17,7 @@ import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Relays browser microphone audio to Azure OpenAI's Realtime transcription
@@ -63,6 +64,8 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     private final String transcriptionModel;
     private volatile String prompt;
     private final Listener listener;
+    /** Hands transcripts on in the order the speech was cut, whichever order Azure answers in (shared with a replacement connection). */
+    private final TranscriptSequencer sequencer;
 
     private volatile WebSocket webSocket;
     private volatile boolean connected;
@@ -70,7 +73,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     // The browser starts streaming audio as soon as ITS websocket to us opens, which can beat our own async handshake
     // to Azure OpenAI. The segmenter takes every chunk regardless, so nothing at the start of a session is lost or
     // left out of its pause analysis; segments that are cut before Azure is connected wait here, in order.
-    private record Outgoing(List<byte[]> pieces, boolean overlap) {}
+    private record Outgoing(List<byte[]> pieces, boolean overlap, long seq) {}
     private final List<Outgoing> outbox = new ArrayList<>();
 
     /** Holds the audio and decides where to cut it into segments (see SpeechSegmenter). */
@@ -85,7 +88,8 @@ public class AzureOpenAiRealtimeTranscriptionClient {
      * not supported for this model"). prompt alone was confirmed accepted.
      */
     public AzureOpenAiRealtimeTranscriptionClient(String apiUrl, String apiKey, String transcriptionModel,
-                                              String prompt, Listener listener) {
+                                              String prompt, TranscriptSequencer sequencer, Listener listener) {
+        this.sequencer = sequencer;
         this.apiUrl = apiUrl;
         this.apiKey = apiKey;
         this.transcriptionModel = transcriptionModel;
@@ -125,7 +129,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
                     synchronized (this) {
                         this.webSocket = ws;
                         sendSessionUpdate();
-                        for (Outgoing queued : outbox) sendSegment(queued.pieces(), 0, queued.overlap()); // cut before we were connected, oldest first
+                        for (Outgoing queued : outbox) sendSegment(queued.pieces(), 0, queued.overlap(), queued.seq()); // cut before we were connected, oldest first
                         outbox.clear();
                         this.connected = true;
                     }
@@ -235,16 +239,17 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     //    audio is kept until the transcript arrives so that a failed segment is sent again instead of silently
     //    losing the words in it. ─────────────────────────────────────────────────────────────────────────────
     private static final int MAX_RETRIES = 2;
-    private static final java.util.concurrent.atomic.AtomicLong SEQ = new java.util.concurrent.atomic.AtomicLong();
 
     private static final class Pending {
         final List<byte[]> audio;
         final int attempts;
         final boolean overlap; // starts with audio already sent in the previous segment
         String itemId;
-        final long seq = SEQ.incrementAndGet();
+        final long seq;                      // the segment's place in the speech; kept through retries and a replaced connection
         final long sentAt = System.currentTimeMillis();
-        Pending(List<byte[]> audio, int attempts, boolean overlap) { this.audio = audio; this.attempts = attempts; this.overlap = overlap; }
+        final AtomicBoolean resolved = new AtomicBoolean(); // answered (by the realtime socket or the fallback): the other answer is ignored
+        volatile boolean hedged;             // the fallback has been started for it
+        Pending(List<byte[]> audio, int attempts, boolean overlap, long seq) { this.audio = audio; this.attempts = attempts; this.overlap = overlap; this.seq = seq; }
         long audioMs() { long b = 0; for (byte[] a : audio) b += a.length; return b / 48; }
     }
 
@@ -256,12 +261,14 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     private final Map<String, Pending> byItem = new HashMap<>();
 
     private synchronized void retry(Pending failed) {
+        if (failed != null && failed.resolved.get()) return; // the fallback already answered it
         if (failed == null || failed.attempts >= MAX_RETRIES) {
             System.err.println("[voice-stt] giving up on a segment after " + (failed == null ? 0 : failed.attempts) + " retries");
+            if (failed != null) { failed.resolved.set(true); sequencer.skip(failed.seq); }
             return;
         }
         System.out.println("[voice-stt] retrying a failed segment (attempt " + (failed.attempts + 1) + ")");
-        sendSegment(failed.audio, failed.attempts + 1, failed.overlap); // Azure's buffer is empty between segments, so it can simply be sent again
+        sendSegment(failed.audio, failed.attempts + 1, failed.overlap, failed.seq); // Azure's buffer is empty between segments, so it can simply be sent again
     }
 
     // ── Chunking lives in SpeechSegmenter: it holds the audio, finds pauses relative to the speaker, cuts in the middle
@@ -282,6 +289,8 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     public boolean isConversational() { return conversational; }
     public boolean isSingleSpeaker() { return singleSpeaker; }
     public int utteranceEndMs() { return utteranceEndMs; }
+    public TranscriptSequencer sequencer() { return sequencer; }
+
     public String currentPrompt() { return prompt; }
 
     /** One person talking (an advisor dictating): sounds that stand alone, or are far quieter than they have been, are not them. */
@@ -361,16 +370,17 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         for (int off = 0; off < audio.length; off += 48000) { // 1 s per append
             pieces.add(java.util.Arrays.copyOfRange(audio, off, Math.min(audio.length, off + 48000)));
         }
-        if (!connected) outbox.add(new Outgoing(pieces, seg.overlap()));
-        else sendSegment(pieces, 0, seg.overlap());
+        long seq = sequencer.reserve();
+        if (!connected) outbox.add(new Outgoing(pieces, seg.overlap(), seq));
+        else sendSegment(pieces, 0, seg.overlap(), seq);
     }
 
     /** Testing only: VOICE_DEBUG_DROP_AFTER_SEGMENT=N silently kills the Azure connection once, right after the Nth segment is sent. */
     private static final java.util.concurrent.atomic.AtomicInteger DEBUG_DROP_AFTER = new java.util.concurrent.atomic.AtomicInteger(
             Integer.parseInt(System.getenv().getOrDefault("VOICE_DEBUG_DROP_AFTER_SEGMENT", "0").trim().isEmpty() ? "0" : System.getenv().getOrDefault("VOICE_DEBUG_DROP_AFTER_SEGMENT", "0").trim()));
 
-    private void sendSegment(List<byte[]> pieces, int attempts, boolean overlap) {
-        awaitingId.addLast(new Pending(pieces, attempts, overlap));
+    private void sendSegment(List<byte[]> pieces, int attempts, boolean overlap, long seq) {
+        awaitingId.addLast(new Pending(pieces, attempts, overlap, seq));
         for (byte[] p : pieces) send(Map.of("type", "input_audio_buffer.append", "audio", Base64.getEncoder().encodeToString(p)));
         send(Map.of("type", "input_audio_buffer.commit"));
         if (DEBUG_DROP_AFTER.get() > 0 && DEBUG_DROP_AFTER.decrementAndGet() == 0) {
@@ -405,10 +415,11 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     public synchronized List<Object[]> salvage() {
         List<Pending> open = new ArrayList<>(awaitingId);
         open.addAll(byItem.values());
+        open.removeIf(p -> p.resolved.get()); // already answered by the fallback: nothing to carry over
         open.sort(java.util.Comparator.comparingLong(p -> p.seq));
         List<Object[]> out = new ArrayList<>();
-        for (Pending p : open) out.add(new Object[] {p.audio, p.overlap});
-        for (Outgoing o : outbox) out.add(new Object[] {o.pieces(), o.overlap()});
+        for (Pending p : open) out.add(new Object[] {p.audio, p.overlap, p.seq});
+        for (Outgoing o : outbox) out.add(new Object[] {o.pieces(), o.overlap(), o.seq()});
         outbox.clear();
         awaitingId.clear();
         byItem.clear();
@@ -417,7 +428,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
             List<byte[]> pieces = new ArrayList<>();
             byte[] audio = held.audio();
             for (int off = 0; off < audio.length; off += 48000) pieces.add(java.util.Arrays.copyOfRange(audio, off, Math.min(audio.length, off + 48000)));
-            out.add(new Object[] {pieces, held.overlap()});
+            out.add(new Object[] {pieces, held.overlap(), sequencer.reserve()});
         }
         return out;
     }
@@ -426,7 +437,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     @SuppressWarnings("unchecked")
     public synchronized void adopt(List<Object[]> items, String previousFinal) {
         List<Outgoing> pre = new ArrayList<>();
-        for (Object[] it : items) pre.add(new Outgoing((List<byte[]>) it[0], (Boolean) it[1]));
+        for (Object[] it : items) pre.add(new Outgoing((List<byte[]>) it[0], (Boolean) it[1], (Long) it[2]));
         outbox.addAll(0, pre);
         if (previousFinal != null && lastFinal == null) lastFinal = previousFinal;
         if (!items.isEmpty()) System.out.println("[voice-stt] carried " + items.size() + " unanswered segment(s) over to a new connection");
@@ -464,10 +475,13 @@ public class AzureOpenAiRealtimeTranscriptionClient {
             if (dead) return;
             long now = System.currentTimeMillis();
             boolean stalled = false;
+            List<Pending> toHedge = new ArrayList<>();
             synchronized (this) {
-                for (Pending p : awaitingId) if (now - p.sentAt > STALL_BASE_MS + (long) (p.audioMs() * 0.6)) stalled = true;
-                for (Pending p : byItem.values()) if (now - p.sentAt > STALL_BASE_MS + (long) (p.audioMs() * 0.6)) stalled = true;
+                for (Pending p : awaitingId) { if (p.resolved.get()) continue; if (now - p.sentAt > STALL_BASE_MS + (long) (p.audioMs() * 0.6)) stalled = true; if (!p.hedged && now - p.sentAt > HEDGE_BASE_MS + (long) (p.audioMs() * 0.3)) toHedge.add(p); }
+                for (Pending p : byItem.values()) { if (p.resolved.get()) continue; if (now - p.sentAt > STALL_BASE_MS + (long) (p.audioMs() * 0.6)) stalled = true; if (!p.hedged && now - p.sentAt > HEDGE_BASE_MS + (long) (p.audioMs() * 0.3)) toHedge.add(p); }
             }
+            for (Pending p : toHedge) hedge(p);
+            sequencer.release();
             if (stalled) {
                 System.err.println("[voice-stt] no transcript for a sent segment after a long wait; replacing the connection");
                 stopWatchdog();
@@ -483,6 +497,17 @@ public class AzureOpenAiRealtimeTranscriptionClient {
 
     /** A healthy transcript takes 1-4 s; this is well beyond that. Longer segments are allowed proportionally longer. */
     private static final long STALL_BASE_MS = 9000;
+    /** Azure's realtime socket sometimes sits on a segment for ten seconds or more; after this the same audio is also sent by plain upload, and the first answer wins. */
+    private static final long HEDGE_BASE_MS = envMs("VOICE_STT_HEDGE_MS", 5000);
+
+    private static long envMs(String name, long dflt) {
+        try {
+            String v = System.getenv(name);
+            return v == null || v.isBlank() ? dflt : Long.parseLong(v.trim());
+        } catch (NumberFormatException e) {
+            return dflt;
+        }
+    }
 
     /**
      * Waits until every segment sent so far has come back as a transcript (or {@code timeoutMs} passes). A fixed short wait
@@ -493,7 +518,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         try {
             while (System.currentTimeMillis() < end) {
                 synchronized (this) {
-                    if (awaitingId.isEmpty() && byItem.isEmpty() && outbox.isEmpty()) return;
+                    if (outbox.isEmpty() && awaitingId.stream().allMatch(p -> p.resolved.get()) && byItem.values().stream().allMatch(p -> p.resolved.get())) return;
                 }
                 Thread.sleep(50);
             }
@@ -565,22 +590,11 @@ public class AzureOpenAiRealtimeTranscriptionClient {
                 case "conversation.item.input_audio_transcription.completed" -> {
                     Pending done;
                     synchronized (this) { done = byItem.remove(root.path("item_id").asText("")); }
-                    String transcript = root.path("transcript").asText("");
-                    System.out.println("[voice-stt] completed (" + transcript.length() + " chars)");
-                    if (transcript.isBlank()) return;
-                    double confidence = meanLogprob(root.path("logprobs"));
-                    if (isInvented(transcript, confidence)) {
-                        System.out.println("[voice-stt] discarded an invented line (confidence " + String.format("%.2f", confidence) + "): " + transcript);
-                        listener.onDiscardedTranscript();
+                    if (done != null && !done.resolved.compareAndSet(false, true)) {
+                        System.out.println("[voice-stt] ignored a late realtime answer: the fallback had already answered that segment");
                         return;
                     }
-                    String text = transcript;
-                    if (done != null && done.overlap && lastFinal != null) {
-                        text = trimRepeatedStart(lastFinal, transcript);
-                        if (!text.equals(transcript)) System.out.println("[voice-stt] removed words repeated from the overlap: \"" + transcript.substring(0, transcript.length() - text.length()).trim() + "\"");
-                    }
-                    lastFinal = transcript;
-                    if (!text.isBlank()) listener.onFinalTranscript(text);
+                    handleTranscript(done, root.path("transcript").asText(""), meanLogprob(root.path("logprobs")), "realtime");
                 }
                 case "session.updated" -> listener.onReady();
                 case "error" -> {
@@ -593,6 +607,109 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         } catch (Exception e) {
             listener.onError("Failed to parse Azure OpenAI realtime event: " + e.getMessage());
         }
+    }
+
+    /**
+     * One segment's transcript has come back (from the realtime socket or the fallback upload): drop it if it is blank or
+     * invented, otherwise hand it on in speech order. {@code done} is null only for an item this connection never matched.
+     */
+    private void handleTranscript(Pending done, String transcript, double confidence, String via) {
+        long seq = done == null ? -1 : done.seq;
+        System.out.println("[voice-stt] completed (" + transcript.length() + " chars" + ("realtime".equals(via) ? "" : ", via " + via) + (commandMode ? ", confidence " + String.format("%.2f", confidence) + ": " + transcript : "") + ")");
+        if (transcript.isBlank()) { if (seq >= 0) sequencer.skip(seq); return; }
+        if (isInvented(transcript, confidence)) {
+            System.out.println("[voice-stt] discarded an invented line (confidence " + String.format("%.2f", confidence) + "): " + transcript);
+            listener.onDiscardedTranscript();
+            if (seq >= 0) sequencer.skip(seq);
+            return;
+        }
+        final boolean overlap = done != null && done.overlap;
+        Runnable deliver = () -> {
+            String previous = sequencer.lastDelivered();
+            String text = transcript;
+            if (overlap && previous != null) {
+                text = trimRepeatedStart(previous, transcript);
+                if (!text.equals(transcript)) System.out.println("[voice-stt] removed words repeated from the overlap: \"" + transcript.substring(0, transcript.length() - text.length()).trim() + "\"");
+            }
+            sequencer.setLastDelivered(transcript);
+            lastFinal = transcript;
+            if (!text.isBlank()) listener.onFinalTranscript(text);
+        };
+        if (seq < 0) deliver.run(); else sequencer.complete(seq, deliver);
+    }
+
+    // ── The fallback. Azure's realtime socket now and then sits on one segment for ten seconds or more (and sometimes never answers),
+    //    while the plain upload endpoint answers the same audio in about two seconds. A segment that has waited a few seconds is
+    //    therefore also sent by plain upload; whichever answer comes first is used and the other is ignored. ───────────────────
+
+    private final java.net.http.HttpClient uploadClient = java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(5)).build();
+
+    private String uploadUrl() {
+        String origin = apiUrl.replaceFirst("^wss://", "https://").replaceFirst("^ws://", "http://");
+        int slash = origin.indexOf('/', 8);
+        if (slash > 0) origin = origin.substring(0, slash);
+        return origin + "/openai/deployments/" + transcriptionModel + "/audio/transcriptions?api-version=2025-03-01-preview";
+    }
+
+    private void hedge(Pending p) {
+        p.hedged = true;
+        try {
+            java.io.ByteArrayOutputStream pcm = new java.io.ByteArrayOutputStream();
+            for (byte[] a : p.audio) pcm.write(a, 0, a.length);
+            byte[] wav = wavOf(pcm.toByteArray());
+            String boundary = "----vi" + Long.toHexString(System.nanoTime());
+            java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+            multipartFile(body, boundary, "file", "segment.wav", "audio/wav", wav);
+            multipartField(body, boundary, "model", transcriptionModel);
+            multipartField(body, boundary, "response_format", "json");
+            multipartField(body, boundary, "include[]", "logprobs");
+            if (language != null) multipartField(body, boundary, "language", language);
+            String pr = prompt;
+            if (pr != null && !pr.isBlank()) multipartField(body, boundary, "prompt", pr);
+            body.write(("--" + boundary + "--\r\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder(URI.create(uploadUrl()))
+                    .timeout(java.time.Duration.ofSeconds(40))
+                    .header("api-key", apiKey)
+                    .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofByteArray(body.toByteArray())).build();
+            System.out.println("[voice-stt] a segment has waited " + (System.currentTimeMillis() - p.sentAt) + "ms; also sending it by plain upload");
+            uploadClient.sendAsync(req, java.net.http.HttpResponse.BodyHandlers.ofString(java.nio.charset.StandardCharsets.UTF_8)).whenComplete((res, err) -> {
+                if (dead || p.resolved.get()) return;
+                if (err != null || res.statusCode() / 100 != 2) {
+                    System.err.println("[voice-stt] the plain upload failed: " + (err != null ? err.toString() : "HTTP " + res.statusCode()));
+                    return; // the realtime answer (or a retry) is still expected
+                }
+                try {
+                    JsonNode root = mapper.readTree(res.body());
+                    if (!p.resolved.compareAndSet(false, true)) return;
+                    handleTranscript(p, root.path("text").asText(""), meanLogprob(root.path("logprobs")), "plain upload");
+                } catch (Exception e) {
+                    System.err.println("[voice-stt] could not read the plain upload answer: " + e.getMessage());
+                }
+            });
+        } catch (Exception e) {
+            System.err.println("[voice-stt] could not start the plain upload: " + e.getMessage());
+        }
+    }
+
+    private static void multipartField(java.io.ByteArrayOutputStream out, String boundary, String name, String value) throws java.io.IOException {
+        out.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + name + "\"\r\n\r\n" + value + "\r\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private static void multipartFile(java.io.ByteArrayOutputStream out, String boundary, String name, String file, String type, byte[] data) throws java.io.IOException {
+        out.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + name + "\"; filename=\"" + file + "\"\r\nContent-Type: " + type + "\r\n\r\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        out.write(data);
+        out.write("\r\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    /** 24 kHz mono 16-bit PCM wrapped in a WAV header. */
+    static byte[] wavOf(byte[] pcm) {
+        int rate = 24000, byteRate = rate * 2;
+        java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(44 + pcm.length).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        b.put("RIFF".getBytes()).putInt(36 + pcm.length).put("WAVE".getBytes()).put("fmt ".getBytes()).putInt(16)
+                .putShort((short) 1).putShort((short) 1).putInt(rate).putInt(byteRate).putShort((short) 2).putShort((short) 16)
+                .put("data".getBytes()).putInt(pcm.length).put(pcm);
+        return b.array();
     }
 
     // ── Telling speech from invented text. Given room noise or a sliver of sound, the speech model writes a fluent
@@ -620,12 +737,17 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         List<String> c = new ArrayList<>();
         List<Integer> ends = new ArrayList<>();
         java.util.regex.Matcher cm = UNIT.matcher(cur);
-        while (cm.find() && c.size() < 12) { c.add(cm.group().toLowerCase(java.util.Locale.ROOT)); ends.add(cm.end()); }
-        for (int k = Math.min(c.size(), p.size()); k >= 1; k--) {
-            if (!p.subList(p.size() - k, p.size()).equals(c.subList(0, k))) continue;
-            boolean han = c.get(0).codePointAt(0) >= 0x4E00 && c.get(0).codePointAt(0) <= 0x9FFF;
-            if (k == 1 && (han || c.get(0).length() <= 3)) continue;
-            return cur.substring(ends.get(k - 1)).replaceFirst("^[\\s,.;:!?，。；：！？-]+", "");
+        while (cm.find() && c.size() < 15) { c.add(cm.group().toLowerCase(java.util.Locale.ROOT)); ends.add(cm.end()); }
+        // The model often puts a word or two of its own in front of the repeated part ("She is a school teacher" after a segment that
+        // ended "...works as a school teacher"): so the repeat may begin up to 3 units in, as long as at least 3 units match there.
+        for (int k = Math.min(Math.min(c.size(), 12), p.size()); k >= 1; k--) {
+            for (int off = 0; off <= 3 && off + k <= c.size(); off++) {
+                if (off > 0 && k < 3) continue;
+                if (!p.subList(p.size() - k, p.size()).equals(c.subList(off, off + k))) continue;
+                boolean han = c.get(off).codePointAt(0) >= 0x4E00 && c.get(off).codePointAt(0) <= 0x9FFF;
+                if (k == 1 && (han || c.get(off).length() <= 3)) continue;
+                return cur.substring(ends.get(off + k - 1)).replaceFirst("^[\\s,.;:!?，。；：！？-]+", "");
+            }
         }
         return cur;
     }
@@ -634,8 +756,9 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     private static final double MIN_MEAN_LOGPROB = -1.0;
     /** A line made only of words from the prompt is read back from it unless the model was sure of every word. */
     private static final double MIN_MEAN_LOGPROB_FOR_PROMPT_WORDS = -0.15;
-    private static final double MIN_MEAN_LOGPROB_FOR_COMMANDS = -0.6;
+    private static final double MIN_MEAN_LOGPROB_FOR_COMMANDS = -0.3;
     private static final double MIN_MEAN_LOGPROB_FOR_BARE_WAKE = -0.5;
+    private static final double MIN_MEAN_LOGPROB_FOR_UNNAMED_COMMANDS = -0.3;
     private static final int MIN_WORDS_FOR_ECHO = 1;
 
     /** Mean log-probability of the tokens, or 0 (fully sure, so the line is kept) if the service sent none. */
@@ -655,15 +778,23 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         return out;
     }
 
+    /** The hint that lets Mandarin, Malay and Tamil words stay in their own language also makes noise sound like fluent sentences, so such a session is stricter. */
+    private static final double MIN_MEAN_LOGPROB_MIXED_HINT = -0.75;
+
     private boolean isInvented(String transcript, double meanLogprob) {
-        if (meanLogprob < MIN_MEAN_LOGPROB) return true;
         String p = prompt;
+        boolean mixedHint = p != null && p.contains("never translate");
+        if (meanLogprob < (mixedHint ? MIN_MEAN_LOGPROB_MIXED_HINT : MIN_MEAN_LOGPROB)) return true;
         List<String> said = words(transcript);
         // Juno mode's prompt IS the list of things the advisor may say, so a real command is made only of prompt words. In a noisy room it
         // is heard with a lower confidence than clean speech, so a command-length line gets a looser bar; a bare "Hey Juno" (what the
         // model reads back from the prompt when it hears nothing) keeps a stricter one. A real "Hey Juno." in a noisy room was heard at -0.26 and wrongly
         // dropped by the old -0.15; a wake word that is falsely heard only chimes and waits, so -0.5 is safe.
-        double echoBar = !commandMode ? MIN_MEAN_LOGPROB_FOR_PROMPT_WORDS : said.size() > 2 ? MIN_MEAN_LOGPROB_FOR_COMMANDS : MIN_MEAN_LOGPROB_FOR_BARE_WAKE;
+        // A command-length line that does not contain the assistant's name can only be the follow-up to a bare "Hey Juno". It is also exactly
+        // what the model reads back from the command list when it hears only noise ("Switch to dark mode."), which once flipped the theme
+        // on its own, so it must be heard clearly. A line with the name keeps the looser bar: the wake word itself is what the advisor said.
+        double commandBar = said.stream().anyMatch(w -> w.startsWith("juno") || w.equals("juneau")) ? MIN_MEAN_LOGPROB_FOR_COMMANDS : MIN_MEAN_LOGPROB_FOR_UNNAMED_COMMANDS;
+        double echoBar = !commandMode ? MIN_MEAN_LOGPROB_FOR_PROMPT_WORDS : said.size() > 2 ? commandBar : MIN_MEAN_LOGPROB_FOR_BARE_WAKE;
         if (p == null || p.isBlank() || meanLogprob >= echoBar) return false;
         if (said.size() < MIN_WORDS_FOR_ECHO) return false;
         java.util.Set<String> inPrompt = new java.util.HashSet<>(words(p));
