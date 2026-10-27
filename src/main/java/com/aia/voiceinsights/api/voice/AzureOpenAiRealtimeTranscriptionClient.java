@@ -104,6 +104,8 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     /** Juno mode's listener: only short spoken commands are expected, so the speech model is told the language and the echo check is looser. */
     private volatile String language;
     private volatile boolean commandMode;
+    /** Juno has asked "Do you want me to…?" and is waiting for a yes: a short answer must then be heard clearly (see isInvented). */
+    private volatile boolean confirming;
 
     /** @param lang an ISO code ("en") the speech model should transcribe in, or null to let it guess (which, in a noisy room, it does badly). */
     public void setLanguage(String lang) {
@@ -280,6 +282,10 @@ public class AzureOpenAiRealtimeTranscriptionClient {
 
     private volatile boolean conversational;
     private volatile boolean singleSpeaker;
+
+    public void setConfirming(boolean on) { confirming = on; }
+
+    public boolean isConfirming() { return confirming; }
 
     public void setConversational(boolean on) {
         conversational = on;
@@ -756,8 +762,9 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     private static final double MIN_MEAN_LOGPROB = -1.0;
     /** A line made only of words from the prompt is read back from it unless the model was sure of every word. */
     private static final double MIN_MEAN_LOGPROB_FOR_PROMPT_WORDS = -0.15;
-    private static final double MIN_MEAN_LOGPROB_FOR_COMMANDS = -0.3;
+    private static final double MIN_MEAN_LOGPROB_FOR_COMMANDS = -0.45;
     private static final double MIN_MEAN_LOGPROB_FOR_BARE_WAKE = -0.5;
+    private static final double MIN_MEAN_LOGPROB_FOR_ANSWER = -0.12;
     private static final double MIN_MEAN_LOGPROB_FOR_UNNAMED_COMMANDS = -0.3;
     private static final int MIN_WORDS_FOR_ECHO = 1;
 
@@ -786,6 +793,9 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         boolean mixedHint = p != null && p.contains("never translate");
         if (meanLogprob < (mixedHint ? MIN_MEAN_LOGPROB_MIXED_HINT : MIN_MEAN_LOGPROB)) return true;
         List<String> said = words(transcript);
+        // While Juno waits for a yes, a stray "Yes." heard from noise must not be taken for the advisor's answer: a real one is heard at about
+        // -0.02 to -0.07, noise at -0.18 or worse. A real answer that falls short is harmless: Juno says it did not hear a yes and does nothing.
+        if (confirming && said.size() <= 4 && meanLogprob < MIN_MEAN_LOGPROB_FOR_ANSWER) return true;
         // Juno mode's prompt IS the list of things the advisor may say, so a real command is made only of prompt words. In a noisy room it
         // is heard with a lower confidence than clean speech, so a command-length line gets a looser bar; a bare "Hey Juno" (what the
         // model reads back from the prompt when it hears nothing) keeps a stricter one. A real "Hey Juno." in a noisy room was heard at -0.26 and wrongly

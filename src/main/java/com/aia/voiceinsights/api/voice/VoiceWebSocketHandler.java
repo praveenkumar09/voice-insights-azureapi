@@ -359,6 +359,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         // conversational timing only when the advisor hands over to Juno (see the "conversational" message).
         if ("JUNO".equals(vs.profile.getCaptureMode()) || "ASK".equals(vs.profile.getCaptureMode())) vs.transcriptionClient.setConversational(true);
         if (old != null && old.isConversational()) vs.transcriptionClient.setConversational(true);
+        vs.transcriptionClient.setConfirming(vs.confirming); // a replaced connection keeps waiting for the same answer
         // Dictating after a meeting is one person talking: sounds that stand alone, or are far quieter than they have been, are
         // the room, not them. (A live conversation has two voices at different distances, so it is judged more gently.)
         String mode = vs.profile.getCaptureMode();
@@ -410,6 +411,12 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         // "conversational": the advisor handed over to Juno, whose questions are answered in short replies.
         if ("conversational".equals(node.path("type").asText("")) && "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()) && vs.transcriptionClient != null) {
             vs.transcriptionClient.setConversational(node.path("on").asBoolean(true));
+            return;
+        }
+        // "confirming": Juno mode is waiting for a yes or no, so a short answer has to be heard clearly (see the transcription client).
+        if ("confirming".equals(node.path("type").asText("")) && "ASK".equals(vs.profile.getCaptureMode())) {
+            vs.confirming = node.path("on").asBoolean(false);
+            if (vs.transcriptionClient != null) vs.transcriptionClient.setConfirming(vs.confirming);
             return;
         }
         // "commands": Juno mode lists what can be said on the current screen. It becomes the speech model's prompt (see promptFor).
@@ -607,6 +614,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         volatile String lang = "en";
         /** Juno mode: what the advisor can say on the current screen (comma-separated), or empty. */
         volatile String commandVocab = "";
+        volatile boolean confirming = false;
         volatile int reconnectAttempts = 0;
         volatile boolean copilotDirty = false;
         final LiveCopilotService.State copilotState;
