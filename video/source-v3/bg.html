@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--red:#D31145;--deep:#6E0A27;--wine:#3B0516}*{margin:0;padding:0}html,body{width:1920px;height:1080px;overflow:hidden}
+.bg{position:absolute;inset:0}
+.light{background:radial-gradient(1000px 700px at 100% -10%,rgba(211,17,69,.18),transparent 60%),radial-gradient(800px 600px at -5% 60%,rgba(211,17,69,.09),transparent 60%),#FFF8FA}
+.dark{background:radial-gradient(900px 700px at 15% 110%,rgba(211,17,69,.6),transparent 62%),linear-gradient(150deg,var(--wine),var(--deep) 55%,#A30D36)}
+.hero{background:url(hero.png) 0% 50%/cover}.veil{position:absolute;inset:0;background:linear-gradient(90deg,rgba(255,248,250,0) 20%,rgba(255,248,250,.97) 58%)}
+.impact{position:absolute;left:0;top:0;width:574px;height:572px;border-radius:36px;background:radial-gradient(500px 400px at 100% 100%,rgba(255,120,150,.45),transparent 62%),linear-gradient(150deg,var(--wine),var(--deep) 50%,var(--red))}
+</style></head><body><div id="k"></div><script>
+const k=new URLSearchParams(location.search).get('k');const d=document.getElementById('k');
+if(k==='title')d.innerHTML='<div class="bg hero"></div><div class="veil"></div>';else if(k==='impact')d.innerHTML='<div class="impact"></div>';else d.innerHTML='<div class="bg '+k+'"></div>';
+</script></body></html>
