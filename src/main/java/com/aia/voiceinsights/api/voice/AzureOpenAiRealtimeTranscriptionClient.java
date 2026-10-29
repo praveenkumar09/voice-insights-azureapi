@@ -106,6 +106,9 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     private volatile boolean commandMode;
     /** Juno has asked "Do you want me to…?" and is waiting for a yes: a short answer must then be heard clearly (see isInvented). */
     private volatile boolean confirming;
+    /** Far mic is on in the browser: the command-confidence bars are stricter (see FAR_MIC_*). */
+    private volatile boolean farMic;
+    public void setFarMic(boolean on) { farMic = on; }
 
     /** @param lang an ISO code ("en") the speech model should transcribe in, or null to let it guess (which, in a noisy room, it does badly). */
     public void setLanguage(String lang) {
@@ -766,6 +769,11 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     private static final double MIN_MEAN_LOGPROB_FOR_BARE_WAKE = -0.5;
     private static final double MIN_MEAN_LOGPROB_FOR_ANSWER = -0.12;
     private static final double MIN_MEAN_LOGPROB_FOR_UNNAMED_COMMANDS = -0.3;
+    // The advisor turned Far mic on (speaking from a distance): the browser then lets quiet sound through, so more room hiss reaches the speech model and
+    // comes back as command-sounding lines. Measured on a laptop: real faint commands -0.02 to -0.16, lines invented from the hiss -0.35 to -0.60.
+    private static final double FAR_MIC_COMMANDS = -0.25;
+    private static final double FAR_MIC_BARE_WAKE = -0.3;
+    private static final double FAR_MIC_UNNAMED_COMMANDS = -0.2;
     private static final int MIN_WORDS_FOR_ECHO = 1;
 
     /** Mean log-probability of the tokens, or 0 (fully sure, so the line is kept) if the service sent none. */
@@ -803,8 +811,9 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         // A command-length line that does not contain the assistant's name can only be the follow-up to a bare "Hey Juno". It is also exactly
         // what the model reads back from the command list when it hears only noise ("Switch to dark mode."), which once flipped the theme
         // on its own, so it must be heard clearly. A line with the name keeps the looser bar: the wake word itself is what the advisor said.
-        double commandBar = said.stream().anyMatch(w -> w.startsWith("juno") || w.equals("juneau")) ? MIN_MEAN_LOGPROB_FOR_COMMANDS : MIN_MEAN_LOGPROB_FOR_UNNAMED_COMMANDS;
-        double echoBar = !commandMode ? MIN_MEAN_LOGPROB_FOR_PROMPT_WORDS : said.size() > 2 ? commandBar : MIN_MEAN_LOGPROB_FOR_BARE_WAKE;
+        double commandBar = said.stream().anyMatch(w -> w.startsWith("juno") || w.equals("juneau"))
+                ? (farMic ? FAR_MIC_COMMANDS : MIN_MEAN_LOGPROB_FOR_COMMANDS) : (farMic ? FAR_MIC_UNNAMED_COMMANDS : MIN_MEAN_LOGPROB_FOR_UNNAMED_COMMANDS);
+        double echoBar = !commandMode ? MIN_MEAN_LOGPROB_FOR_PROMPT_WORDS : said.size() > 2 ? commandBar : (farMic ? FAR_MIC_BARE_WAKE : MIN_MEAN_LOGPROB_FOR_BARE_WAKE);
         if (p == null || p.isBlank() || meanLogprob >= echoBar) return false;
         if (said.size() < MIN_WORDS_FOR_ECHO) return false;
         java.util.Set<String> inPrompt = new java.util.HashSet<>(words(p));

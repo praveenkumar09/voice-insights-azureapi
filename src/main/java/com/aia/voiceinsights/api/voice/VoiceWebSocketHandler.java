@@ -235,6 +235,17 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                 + " (they may mix in English words). Transcribe in the language spoken.";
     }
 
+    /**
+     * An English session tells the speech model it is English. It is a hint, not a restriction: measured with Azure, a pure Malay and a pure
+     * Mandarin passage and Mandarin words inside English were all still written as spoken with it on. Without it the model guesses the language
+     * from each segment alone, and quiet, echoey or very short English (a presenter far from the microphone) was sometimes guessed to be Malay.
+     * Another session language is left to the model: it hears the words and the prompt.
+     */
+    private void applyLanguage(VoiceSession vs) {
+        AzureOpenAiRealtimeTranscriptionClient c = vs.transcriptionClient;
+        if (c != null) c.setLanguage("en".equals(vs.lang) ? "en" : null);
+    }
+
     /** Juno mode (an ask session that has sent its command list): English, and a command is over after a short quiet. */
     private void applyCommandMode(VoiceSession vs) {
         AzureOpenAiRealtimeTranscriptionClient c = vs.transcriptionClient;
@@ -360,6 +371,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         if ("JUNO".equals(vs.profile.getCaptureMode()) || "ASK".equals(vs.profile.getCaptureMode())) vs.transcriptionClient.setConversational(true);
         if (old != null && old.isConversational()) vs.transcriptionClient.setConversational(true);
         vs.transcriptionClient.setConfirming(vs.confirming); // a replaced connection keeps waiting for the same answer
+        vs.transcriptionClient.setFarMic(vs.farMic);
         // Dictating after a meeting is one person talking: sounds that stand alone, or are far quieter than they have been, are
         // the room, not them. (A live conversation has two voices at different distances, so it is judged more gently.)
         String mode = vs.profile.getCaptureMode();
@@ -368,6 +380,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         // level) and tells the browser, which asks the question once its words have come back.
         if ("ASK".equals(mode)) vs.transcriptionClient.setUtteranceEnd(1100);
         applyCommandMode(vs);
+        applyLanguage(vs);
         if (old != null && old.utteranceEndMs() > 0) vs.transcriptionClient.setUtteranceEnd(old.utteranceEndMs());
         if (old != null) { // hand over what the old connection never answered, then retire it so a late answer cannot duplicate it
             vs.transcriptionClient.adopt(old.salvage(), old.lastFinalText());
@@ -413,6 +426,12 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             vs.transcriptionClient.setConversational(node.path("on").asBoolean(true));
             return;
         }
+        // "far": the advisor turned Far mic on or off in the browser (speaking from a distance); the command bars follow.
+        if ("far".equals(node.path("type").asText(""))) {
+            vs.farMic = node.path("on").asBoolean(false);
+            if (vs.transcriptionClient != null) vs.transcriptionClient.setFarMic(vs.farMic);
+            return;
+        }
         // "confirming": Juno mode is waiting for a yes or no, so a short answer has to be heard clearly (see the transcription client).
         if ("confirming".equals(node.path("type").asText("")) && "ASK".equals(vs.profile.getCaptureMode())) {
             vs.confirming = node.path("on").asBoolean(false);
@@ -436,6 +455,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         // "language": the customer (or advisor) chose another language — tell the speech model what to expect.
         if ("language".equals(node.path("type").asText(""))) {
             vs.lang = com.aia.voiceinsights.api.service.JunoPhrases.normalize(node.path("lang").asText("en"));
+            applyLanguage(vs);
             if (vs.transcriptionClient != null) vs.transcriptionClient.updatePrompt(promptFor(vs, nameContext(vs, "")));
             return;
         }
@@ -615,6 +635,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         /** Juno mode: what the advisor can say on the current screen (comma-separated), or empty. */
         volatile String commandVocab = "";
         volatile boolean confirming = false;
+        volatile boolean farMic = false;
         volatile int reconnectAttempts = 0;
         volatile boolean copilotDirty = false;
         final LiveCopilotService.State copilotState;
