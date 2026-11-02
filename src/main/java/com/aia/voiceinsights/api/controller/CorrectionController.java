@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.time.Duration;
 import java.util.Map;
 
-/** Spoken corrections on the debrief review page. Like the rest of Juno it only returns a proposal; nothing is stored here. */
+/** Spoken corrections on the debrief review page. Like the rest of Spark it only returns a proposal; nothing is stored here. */
 @RestController
 @RequestMapping("/api/juno/correction")
 public class CorrectionController {

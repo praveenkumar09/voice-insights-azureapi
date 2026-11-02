@@ -11,7 +11,7 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Corrections the advisor speaks to Juno on the review page: "make that a monthly budget", "her age is 39", "the name is Priya,
+ * Corrections the advisor speaks to Spark on the review page: "make that a monthly budget", "her age is 39", "the name is Priya,
  * P R I Y A". It only turns the words into one proposed change to one field of the record. It never saves anything: the page applies
  * the change, shows what changed, and lets the advisor undo it.
  */
@@ -20,7 +20,7 @@ public class CorrectionService {
 
     private static final Logger log = LoggerFactory.getLogger(CorrectionService.class);
 
-    /** {@code field} is one of the record fields, or "none" when the words were not a correction. {@code say} is Juno's one-line reply. */
+    /** {@code field} is one of the record fields, or "none" when the words were not a correction. {@code say} is Spark's one-line reply. */
     public record Result(String field, String value, String say) {}
 
     private record Llm(String field, String value, String say) {}

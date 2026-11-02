@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The advisor's discussion with Juno about a suggestion run, kept with the run: what was asked, what Juno answered and which
+ * The advisor's discussion with Spark about a suggestion run, kept with the run: what was asked, what Spark answered and which
  * sources each answer rested on. It is the record that the advisor questioned the suggestions before using them.
  */
 @Service

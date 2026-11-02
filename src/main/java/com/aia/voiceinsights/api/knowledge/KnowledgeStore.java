@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The policy-document vectors: {@code voice_insights.product_chunks}, the table the Need agent, Juno and the RAG validator search
+ * The policy-document vectors: {@code voice_insights.product_chunks}, the table the Need agent, Spark and the RAG validator search
  * (see ProductVectorSearchService). Same columns voice-insights-ingestor writes, so both can feed it.
  */
 @Component

@@ -10,7 +10,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Every sum Juno relies on is done here, never by the language model. The model reads facts and says <i>what</i> is wanted ("income
+ * Every sum Spark relies on is done here, never by the language model. The model reads facts and says <i>what</i> is wanted ("income
  * times one half", "one more dependant"); this class does the arithmetic with exact decimals and returns the working beside the
  * answer, so a figure can always be shown, checked and tested.
  */

@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Dress Rehearsal: training the advisor for the next meeting with a debriefed customer. Like the rest of Juno it only returns words;
+ * Dress Rehearsal: training the advisor for the next meeting with a debriefed customer. Like the rest of Spark it only returns words;
  * nothing here stores anything, sends anything to a customer or starts an analysis.
  */
 @RestController

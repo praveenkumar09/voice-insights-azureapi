@@ -18,7 +18,7 @@ import java.util.concurrent.Executors;
 import java.util.regex.Pattern;
 
 /**
- * "What if…?": the advisor asks Juno what would change if a fact about the customer were different. Juno does not reason its way
+ * "What if…?": the advisor asks Spark what would change if a fact about the customer were different. Spark does not reason its way
  * to a new list; it works out which facts would change, reads them back for the advisor's yes, runs the real agent analysis over a
  * <i>scratch copy</i> of the profile and compares the outcome with the original suggestions. The customer's profile and the
  * original run are never touched, and the scenario is labelled as explored, not actual.
@@ -38,7 +38,7 @@ public class ScenarioService {
         }
     }
 
-    /** What Juno says and shows in reply to an advisor turn that was about a scenario. */
+    /** What Spark says and shows in reply to an advisor turn that was about a scenario. */
     public record Reply(List<String> sentences, List<Map<String, Object>> events) {}
 
     public record ProductMove(String name, Integer before, Integer after, String relevanceBefore, String relevanceAfter, String movement, String why) {}
@@ -413,7 +413,7 @@ public class ScenarioService {
                     out.remove(before);
                     continue;
                 }
-                // What Juno reads back is always built here from the figures; a phrase written by the model is never spoken.
+                // What Spark reads back is always built here from the figures; a phrase written by the model is never spoken.
             }
             if (out.size() >= 4) break;
         }
@@ -647,7 +647,7 @@ public class ScenarioService {
             """;
 
     private static final String EXPLAIN_PROMPT = """
-            You are Juno, AIA Singapore's digital suggestion assistant, explaining to an AIA financial advisor how the product suggestions
+            You are Spark, AIA Singapore's digital suggestion assistant, explaining to an AIA financial advisor how the product suggestions
             would change if one or more facts about their customer were different. This is an explored scenario, not the customer's real
             situation. You are given the changed facts and, for each product, its place and reasons in the original analysis and in the
             analysis with the change. Use only that. Reply with JSON only:

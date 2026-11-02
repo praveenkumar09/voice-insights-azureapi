@@ -75,7 +75,7 @@ final class SpeechSegmenter {
     private volatile boolean conversational;
     private volatile boolean singleSpeaker;
 
-    /** Conversation with Juno: each answer is ended by the browser, so slicing at short pauses would split it. */
+    /** Conversation with Spark: each answer is ended by the browser, so slicing at short pauses would split it. */
     void setConversational(boolean on) {
         conversational = on;
         cutGapMs = on ? 550 : 300;

@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Juno's conversation brain (hosting a customer, or debriefing an advisor). It only ever returns what Juno should say — there is deliberately no endpoint
+ * Spark's conversation brain (hosting a customer, or debriefing an advisor). It only ever returns what Spark should say — there is deliberately no endpoint
  * here (or reachable from here) that starts a recommendation run: that remains an explicit action by the advisor.
  */
 @RestController
@@ -32,14 +32,14 @@ public class JunoController {
         this.speech = speech;
     }
 
-    /** Whether Juno can speak with the neural voice (otherwise the browser uses its own). */
+    /** Whether Spark can speak with the neural voice (otherwise the browser uses its own). */
     @org.springframework.web.bind.annotation.GetMapping(value = "/voice", produces = MediaType.APPLICATION_JSON_VALUE)
     public Map<String, Object> voice() {
         return Map.of("enabled", speech.enabled(), "voices", speech.voices());
     }
 
     /** Speaks a line: MP3 audio. 503 when speech is not available, so the browser falls back to its own voice. */
-    /** The fixed lines Juno says in a language (greeting, consent questions, goodbyes, acknowledgements). */
+    /** The fixed lines Spark says in a language (greeting, consent questions, goodbyes, acknowledgements). */
     @org.springframework.web.bind.annotation.GetMapping(value = "/phrases", produces = MediaType.APPLICATION_JSON_VALUE)
     public com.aia.voiceinsights.api.service.JunoPhrases.Phrases phrases(@org.springframework.web.bind.annotation.RequestParam(value = "lang", required = false) String lang) {
         return com.aia.voiceinsights.api.service.JunoPhrases.of(lang);
@@ -52,13 +52,13 @@ public class JunoController {
         return ResponseEntity.ok().header("Cache-Control", "private, max-age=3600").body(audio);
     }
 
-    /** Debrief with Juno: what Juno says to the advisor next, after the advisor's dictation. */
+    /** Debrief with Spark: what Spark says to the advisor next, after the advisor's dictation. */
     @PostMapping(value = "/debrief-turn", produces = MediaType.APPLICATION_JSON_VALUE)
     public JunoDebriefService.DebriefTurn debriefTurn(@RequestBody JunoDebriefService.Request request) {
         return debrief.next(request);
     }
 
-    /** Warms what Juno needs for its first line while the advisor's last words are still being transcribed. */
+    /** Warms what Spark needs for its first line while the advisor's last words are still being transcribed. */
     @PostMapping(value = "/debrief-prepare")
     public ResponseEntity<Void> debriefPrepare(@RequestBody Map<String, String> body) {
         debrief.prepare(body.get("profileId"), body.get("dictation"));

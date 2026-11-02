@@ -59,7 +59,7 @@ public class DebriefFollowUpService {
             - Invite questions. Never pressure.
             - Do NOT quote prices, premiums, returns, budgets or any figure. Do NOT guarantee anything. Do NOT name any product.
               Do NOT mention health conditions, income or amounts the customer did not raise themselves.
-            - The message is from the ADVISOR. Never mention Juno and never sign as Juno. Sign off with exactly "[Your name]".
+            - The message is from the ADVISOR. Never mention Spark and never sign as Spark. Sign off with exactly "[Your name]".
             - CONDUCT: if the input lists CONDUCT FLAGS, the advisor said something risky to this customer (a promise or guarantee).
               Include ONE short, gentle sentence in the message that clarifies it without repeating the claim and without blame.
               Use plain, firm wording such as "Just to be clear, approval is subject to the insurer's review, and returns are not
@@ -98,7 +98,7 @@ public class DebriefFollowUpService {
                     + "ADVISOR'S NOTES: " + (p.getNotes() == null ? "none" : p.getNotes()) + "\n"
                     + (flags.isEmpty() ? "CONDUCT FLAGS: none\n"
                        : "CONDUCT FLAGS: " + flags.stream().map(x -> "\"" + x.statement() + "\" (" + x.advice() + ")").toList() + "\n"
-                         + "CONVERSATION EXCERPT (Juno asks, the advisor answers):\n" + excerpt(p.getRawTranscript()) + "\n")
+                         + "CONVERSATION EXCERPT (Spark asks, the advisor answers):\n" + excerpt(p.getRawTranscript()) + "\n")
                     + "\nWrite the WhatsApp draft.";
             var r = chatModel.call(new Prompt(List.of(new SystemMessage(SYSTEM + Wording.PROMPT_RULE), new UserMessage(user)),
                     AzureOpenAiChatOptions.builder().responseFormat(AzureOpenAiResponseFormat.JSON).temperature(0.5).maxTokens(500).build()));
@@ -126,10 +126,10 @@ public class DebriefFollowUpService {
         }
     }
 
-    /** The part of the stored transcript from Juno's first line on (its questions and the advisor's answers), trimmed. */
+    /** The part of the stored transcript from Spark's first line on (its questions and the advisor's answers), trimmed. */
     private static String excerpt(String raw) {
         if (raw == null) return "(none)";
-        int i = raw.indexOf("[Juno]");
+        int i = raw.indexOf("[Spark]");
         String t = i < 0 ? raw : raw.substring(i);
         return t.length() > 2500 ? t.substring(0, 2500) : t;
     }

@@ -101,10 +101,10 @@ public class AzureOpenAiRealtimeTranscriptionClient {
      * Gives the speech model fresh context mid-conversation (for example "a name is about to be said, and these names have
      * already been heard"), which helps it spell personal names the way the conversation has been spelling them.
      */
-    /** Juno mode's listener: only short spoken commands are expected, so the speech model is told the language and the echo check is looser. */
+    /** Spark mode's listener: only short spoken commands are expected, so the speech model is told the language and the echo check is looser. */
     private volatile String language;
     private volatile boolean commandMode;
-    /** Juno has asked "Do you want me to…?" and is waiting for a yes: a short answer must then be heard clearly (see isInvented). */
+    /** Spark has asked "Do you want me to…?" and is waiting for a yes: a short answer must then be heard clearly (see isInvented). */
     private volatile boolean confirming;
     /** Far mic is on in the browser: the command-confidence bars are stricter (see FAR_MIC_*). */
     private volatile boolean farMic;
@@ -200,7 +200,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
                 try { Thread.sleep(60); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
                 // A sentence that stops on "and", "that", a comma... is a pause in the middle of a thought, not a finished question:
                 // give the speaker a little longer to carry on, and if they do, this was not the end.
-                // (Juno mode skips this and the longer wait for someone who already paused: a bare "Hey Juno," makes the page wait for the
+                // (Spark mode skips this and the longer wait for someone who already paused: a bare "Hey Spark," makes the page wait for the
                 // command anyway, so those extra seconds only slowed every request.)
                 if (!commandMode && looksUnfinished(lastFinal)) {
                     System.out.println("[voice-stt] \"" + lastFinal + "\" sounds unfinished; waiting a little longer");
@@ -801,17 +801,17 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         boolean mixedHint = p != null && p.contains("never translate");
         if (meanLogprob < (mixedHint ? MIN_MEAN_LOGPROB_MIXED_HINT : MIN_MEAN_LOGPROB)) return true;
         List<String> said = words(transcript);
-        // While Juno waits for a yes, a stray "Yes." heard from noise must not be taken for the advisor's answer: a real one is heard at about
-        // -0.02 to -0.07, noise at -0.18 or worse. A real answer that falls short is harmless: Juno says it did not hear a yes and does nothing.
+        // While Spark waits for a yes, a stray "Yes." heard from noise must not be taken for the advisor's answer: a real one is heard at about
+        // -0.02 to -0.07, noise at -0.18 or worse. A real answer that falls short is harmless: Spark says it did not hear a yes and does nothing.
         if (confirming && said.size() <= 4 && meanLogprob < MIN_MEAN_LOGPROB_FOR_ANSWER) return true;
-        // Juno mode's prompt IS the list of things the advisor may say, so a real command is made only of prompt words. In a noisy room it
-        // is heard with a lower confidence than clean speech, so a command-length line gets a looser bar; a bare "Hey Juno" (what the
-        // model reads back from the prompt when it hears nothing) keeps a stricter one. A real "Hey Juno." in a noisy room was heard at -0.26 and wrongly
+        // Spark mode's prompt IS the list of things the advisor may say, so a real command is made only of prompt words. In a noisy room it
+        // is heard with a lower confidence than clean speech, so a command-length line gets a looser bar; a bare "Hey Spark" (what the
+        // model reads back from the prompt when it hears nothing) keeps a stricter one. A real "Hey Spark." in a noisy room was heard at -0.26 and wrongly
         // dropped by the old -0.15; a wake word that is falsely heard only chimes and waits, so -0.5 is safe.
-        // A command-length line that does not contain the assistant's name can only be the follow-up to a bare "Hey Juno". It is also exactly
+        // A command-length line that does not contain the assistant's name can only be the follow-up to a bare "Hey Spark". It is also exactly
         // what the model reads back from the command list when it hears only noise ("Switch to dark mode."), which once flipped the theme
         // on its own, so it must be heard clearly. A line with the name keeps the looser bar: the wake word itself is what the advisor said.
-        double commandBar = said.stream().anyMatch(w -> w.startsWith("juno") || w.equals("juneau"))
+        double commandBar = said.stream().anyMatch(w -> w.startsWith("juno") || w.equals("juneau") || w.startsWith("spark") || w.equals("sparc"))
                 ? (farMic ? FAR_MIC_COMMANDS : MIN_MEAN_LOGPROB_FOR_COMMANDS) : (farMic ? FAR_MIC_UNNAMED_COMMANDS : MIN_MEAN_LOGPROB_FOR_UNNAMED_COMMANDS);
         double echoBar = !commandMode ? MIN_MEAN_LOGPROB_FOR_PROMPT_WORDS : said.size() > 2 ? commandBar : (farMic ? FAR_MIC_BARE_WAKE : MIN_MEAN_LOGPROB_FOR_BARE_WAKE);
         if (p == null || p.isBlank() || meanLogprob >= echoBar) return false;

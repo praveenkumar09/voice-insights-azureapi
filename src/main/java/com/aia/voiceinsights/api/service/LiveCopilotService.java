@@ -135,13 +135,13 @@ public class LiveCopilotService {
 
     private record AskLlm(String trigger, String kind, List<String> questions) {}
 
-    /** The transcript carries [Juno] (AI host) and [Customer] labels, because the conversation is hosted by an AI assistant. */
-    /** Appended in a debrief with Juno: its questions are labelled and are not a source of facts; stray lines are ignored. */
+    /** The transcript carries [Spark] (AI host) and [Customer] labels, because the conversation is hosted by an AI assistant. */
+    /** Appended in a debrief with Spark: its questions are labelled and are not a source of facts; stray lines are ignored. */
     private static final String JUNO_DEBRIEF_NOTE = """
 
-            The transcript may also contain lines labelled [Juno] (an AI assistant's questions to the advisor) and [Advisor]
+            The transcript may also contain lines labelled [Spark] (an AI assistant's questions to the advisor) and [Advisor]
             (the advisor's answers). Use only the advisor's words (unlabelled or [Advisor]) for facts and quotes; never
-            quote or flag [Juno] lines.
+            quote or flag [Spark] lines.
             The transcript comes from speech recognition. After a pause or in background noise it sometimes invents stray lines
             that have nothing to do with the meeting: a greeting, a stray name, a list of insurance terms ("CPF, MediSave,
             premium"), a question to nobody, a phone-call script. Ignore such lines. Never take a fact from a line that does not
@@ -150,10 +150,10 @@ public class LiveCopilotService {
 
     private static final String JUNO_ADDENDUM = """
 
-            MODE: JUNO. The transcript is labelled: lines starting [Juno] are the AI host AIA's Juno, the rest is
+            MODE: JUNO. The transcript is labelled: lines starting [Spark] are the AI host AIA's Spark, the rest is
             the CUSTOMER. Needs, sentiment, buying signal and the lifeMap describe the CUSTOMER and use only the
             customer's words ("said" is copied exactly from the customer's own words). nextQuestions are things still
-            unknown that the human advisor should explore later. complianceFlags apply to what [Juno] said.
+            unknown that the human advisor should explore later. complianceFlags apply to what [Spark] said.
             """;
 
     private record Llm(List<NeedTag> needs, Sentiment sentiment, BuyingSignal buyingSignal,
@@ -188,7 +188,7 @@ public class LiveCopilotService {
         public State() { this(false); }
         public State(boolean debrief) { this.debrief = debrief; }
         /**
-         * Debrief with Juno only: an unnamed "son" or "daughter" already says which child it is, so a generic "child" heard earlier
+         * Debrief with Spark only: an unnamed "son" or "daughter" already says which child it is, so a generic "child" heard earlier
          * (or later) is dropped instead of being listed beside them. The other capture modes keep their existing behaviour.
          */
         private boolean specificChildrenReplaceGeneric;

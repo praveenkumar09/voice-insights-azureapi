@@ -28,13 +28,13 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * "Talk it through with Juno": the advisor asks, in their own voice, why the agents suggested what they did, and Juno answers
+ * "Talk it through with Spark": the advisor asks, in their own voice, why the agents suggested what they did, and Spark answers
  * like a colleague who was in the room.
  *
- * <p>Everything Juno says is grounded. The run's facts are written out as numbered <i>sources</i> — what the customer shared (C),
+ * <p>Everything Spark says is grounded. The run's facts are written out as numbered <i>sources</i> — what the customer shared (C),
  * the agents' reasoning (A), compliance findings (K) and product-document evidence (D), the last also searched afresh for each
- * question. Juno cites the ids it relied on, and each spoken sentence reaches the browser with the sources behind it so the
- * advisor can see where it came from. Juno suggests; it never advises, promises, quotes a score or invents a product fact.
+ * question. Spark cites the ids it relied on, and each spoken sentence reaches the browser with the sources behind it so the
+ * advisor can see where it came from. Spark suggests; it never advises, promises, quotes a score or invents a product fact.
  *
  * <p>The answer is streamed sentence by sentence, so the browser can start speaking the first sentence while the rest is still
  * being written. Every exchange is stored with the run.
@@ -51,7 +51,7 @@ public class JunoAskService {
     private record Context(String text, Map<String, Source> sources, List<String> shortlist, String customerName, long at, boolean complete, String incomeText) {}
 
     private static final String SYSTEM = """
-            You are Juno, AIA Singapore's digital suggestion assistant. You are talking, out loud, with an AIA financial advisor
+            You are Spark, AIA Singapore's digital suggestion assistant. You are talking, out loud, with an AIA financial advisor
             about the product suggestions your team of AI agents made for one of their customers. It is a conversation between two
             colleagues, not a report: you were in the room when the analysis was done, you know this customer's file, and the advisor
             is checking your thinking before they use it. They may be sceptical. Welcome that.
@@ -111,12 +111,12 @@ public class JunoAskService {
 
             EXAMPLES OF THE FEEL
             Advisor: Why did you put Secure Guard Term first?
-            Juno:
+            Spark:
             Mainly because Mr Tan's biggest worry is his family being left with the home loan if something happens to him. [C3]
             It's the plan whose documents speak most directly to that. [D1]
             And it sits comfortably inside the budget he mentioned. [A6]
             Advisor: Isn't that a bit generic?
-            Juno:
+            Spark:
             Fair challenge. The weaker spot is that it does nothing for the education savings he wants. [A9]
             That's why the investment plan is second: it's the conversation to have next. [A8]
             """;
@@ -145,7 +145,7 @@ public class JunoAskService {
         this.chatModel = chatModel;
     }
 
-    // ── What Juno knows about the run ─────────────────────────────────────────────────────────────────────────────
+    // ── What Spark knows about the run ─────────────────────────────────────────────────────────────────────────────
 
     /** Collects the numbered sources and the text block that lists them. */
     private static final class Book {
@@ -223,7 +223,7 @@ public class JunoAskService {
             }
         }
 
-        // Sums done by the system, not the model: Juno quotes these and never works anything out itself.
+        // Sums done by the system, not the model: Spark quotes these and never works anything out itself.
         List<String> sums = new ArrayList<>();
         Calc.parseMoney(profile.getIncomeBand()).ifPresent(m -> {
             Calc.Money other = m.per(m.period() == Calc.Period.MONTH ? Calc.Period.YEAR : Calc.Period.MONTH);
@@ -332,7 +332,7 @@ public class JunoAskService {
     // ── Asking ───────────────────────────────────────────────────────────────────────────────────────────────────
 
     /**
-     * Streams Juno's answer as JSON events: {@code sentence} (text + the sources behind it), then {@code done}; or {@code error}.
+     * Streams Spark's answer as JSON events: {@code sentence} (text + the sources behind it), then {@code done}; or {@code error}.
      * Cancelling the subscription (the advisor interrupts) stops the model at once; whatever was said so far is kept.
      */
     public Flux<String> ask(String runId, String question) {
@@ -395,9 +395,9 @@ public class JunoAskService {
                         Sentence s = clean(raw, all);
                         if (s == null) return;
                         boolean figuresOk = figuresAllowed(s.text(), allowedFigures);
-                        if (!figuresOk) log.info("Juno ask {}: a figure in her answer is not in the sources: {}", runId.substring(0, 8), s.text());
+                        if (!figuresOk) log.info("Spark ask {}: a figure in her answer is not in the sources: {}", runId.substring(0, 8), s.text());
                         if (answer.length() == 0) {
-                            log.info("Juno ask {}: first sentence {}ms after the question (context {}ms, document search {}ms, first words from the model {}ms)",
+                            log.info("Spark ask {}: first sentence {}ms after the question (context {}ms, document search {}ms, first words from the model {}ms)",
                                     runId.substring(0, 8), System.currentTimeMillis() - t0, tContext - t0, tSearch - tContext, firstToken[0] == 0 ? -1 : firstToken[0] - tSearch);
                         }
                         if (answer.length() > 0) answer.append(' ');
@@ -416,7 +416,7 @@ public class JunoAskService {
                                         if (t != null) for (String raw : splitter.feed(t)) emit.accept(raw);
                                     },
                                     err -> {
-                                        log.warn("Juno ask failed for run {}: {}", runId, err.getMessage());
+                                        log.warn("Spark ask failed for run {}: {}", runId, err.getMessage());
                                         sink.next(json(Map.of("type", "error", "message", "I couldn't think that through just now — please ask me again.")));
                                         sink.complete();
                                     },
@@ -431,7 +431,7 @@ public class JunoAskService {
                     sink.next(json(Map.of("type", "error", "message", "I can't find that analysis any more.")));
                     sink.complete();
                 } catch (Exception e) {
-                    log.warn("Juno ask could not start for run {}: {}", runId, e.toString());
+                    log.warn("Spark ask could not start for run {}: {}", runId, e.toString());
                     sink.next(json(Map.of("type", "error", "message", "I couldn't think that through just now — please ask me again.")));
                     sink.complete();
                 }
@@ -476,12 +476,12 @@ public class JunoAskService {
 
     private record Sentence(String text, List<Map<String, Object>> sources) {}
 
-    // ── Figures: Juno quotes numbers, the system calculates them ────────────────────────────────────────────────
+    // ── Figures: Spark quotes numbers, the system calculates them ────────────────────────────────────────────────
 
     private static final Pattern PERCENT_OF = Pattern.compile("(?i)(\\d+(?:\\.\\d+)?)\\s*(?:%|percent|per cent)\\s+of\\s+(?:his|her|their|the)?\\s*(yearly\\s+|annual\\s+|monthly\\s+)?(?:income|salary|pay|earnings)");
     private static final Pattern FRACTION_OF = Pattern.compile("(?i)\\b(half|double|twice|triple|a third|a quarter|quarter)\\s+(?:of\\s+)?(?:his|her|their)\\s+(?:income|salary|pay|earnings)");
 
-    /** A sum the advisor asks for outright ("what is 30% of his income?") is worked out here and handed to Juno as a source. */
+    /** A sum the advisor asks for outright ("what is 30% of his income?") is worked out here and handed to Spark as a source. */
     private List<Source> derived(String question, Context ctx) {
         List<Source> out = new ArrayList<>();
         if (ctx.incomeText() == null || Calc.parseMoney(ctx.incomeText()).isEmpty()) return out;
@@ -598,7 +598,7 @@ public class JunoAskService {
     /**
      * Searching the product documents costs about 0.6 s, so it is done only when the question asks for a detail of them. The
      * reasoning questions ("why first?", "what are the weak points?", "what drove this?") are answered from the evidence already
-     * gathered for the run, which is in Juno's notes.
+     * gathered for the run, which is in Spark's notes.
      */
     private boolean needsDocuments(String question) {
         String q = question;

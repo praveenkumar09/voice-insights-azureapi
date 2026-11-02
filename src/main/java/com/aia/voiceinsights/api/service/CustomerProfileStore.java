@@ -85,7 +85,7 @@ public class CustomerProfileStore {
         }
     }
 
-    /** Removes a profile entirely — used when a customer declines consent to a Juno conversation. */
+    /** Removes a profile entirely — used when a customer declines consent to a Spark conversation. */
     public void delete(String id) {
         jdbc.update("DELETE FROM %s.customer_profiles WHERE id = ?".formatted(schema), id);
     }

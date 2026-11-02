@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.time.Duration;
 import java.util.Map;
 
-/** Juno mode: which action on the current screen did the advisor ask for? It only answers; the page decides and acts. */
+/** Spark mode: which action on the current screen did the advisor ask for? It only answers; the page decides and acts. */
 @RestController
 @RequestMapping("/api/juno/command")
 public class JunoCommandController {

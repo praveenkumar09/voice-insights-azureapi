@@ -21,12 +21,12 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Juno as a conversation host: decides what it says next while it talks with a customer on its own.
+ * Spark as a conversation host: decides what it says next while it talks with a customer on its own.
  * <p>
  * The flow is fixed by this class, not left to the model: (1) the customer's consent to be recorded and analysed
  * is established first, from their own reply; a refusal (or two unclear answers) ends the conversation with a
  * scripted goodbye; (2) discovery covers six topics, one question at a time; (3) a scripted-length wrap-up hands
- * the customer over to their advisor. Juno only talks — it has no way to start the analysis; that stays a
+ * the customer over to their advisor. Spark only talks — it has no way to start the analysis; that stays a
  * button for the real advisor.
  */
 @Service
@@ -35,9 +35,9 @@ public class JunoService {
     private static final Logger log = LoggerFactory.getLogger(JunoService.class);
 
     public static final List<String> TOPICS = List.of("about", "family", "goals", "concerns", "money", "cover");
-    /** After this many customer replies Juno wraps up, whatever is still uncovered. */
+    /** After this many customer replies Spark wraps up, whatever is still uncovered. */
     private static final int MAX_CUSTOMER_TURNS = 22;
-    /** After the interview the customer is invited to ask their own questions; Juno answers up to this many. */
+    /** After the interview the customer is invited to ask their own questions; Spark answers up to this many. */
     private static final int QA_MAX = 5;
     private static final String CLOSING_MARKER = "anything you'd like to ask";
 
@@ -66,7 +66,7 @@ public class JunoService {
     private record Llm(String consent, String say, List<String> covered, Boolean done, String tone, Boolean open, Boolean noMore) {}
 
     private static final String SYSTEM = """
-            You are Juno, the AIA Singapore digital suggestion assistant, talking out loud with a customer who is meeting an
+            You are Spark, the AIA Singapore digital suggestion assistant, talking out loud with a customer who is meeting an
             AIA financial advisor. You are an AI and you say so if asked; you are never a human and never a licensed
             adviser. Your job is a warm, natural first conversation that helps the advisor understand the customer
             before the advisor takes over. Everything you write is SPOKEN, so write the way people talk.
@@ -221,10 +221,10 @@ public class JunoService {
             }
 
             List<String> all = new ArrayList<>(TOPICS);
-            // The customer has nothing more to ask (or the questions have run their course): now Juno wraps up.
+            // The customer has nothing more to ask (or the questions have run their course): now Spark wraps up.
             if (forceWrap) return new Response(clean(polish(llm.say(), req, turns), ph.wrap()), null, all, true, "wrapup", "warm");
 
-            // Final questions: Juno answers what the customer asks, then offers to take more.
+            // Final questions: Spark answers what the customer asks, then offers to take more.
             if (qaMode) {
                 if (Boolean.TRUE.equals(llm.noMore())) {
                     // The model heard "nothing more" (needed for languages the quick English check cannot read): wrap up properly.
@@ -269,8 +269,8 @@ public class JunoService {
         if (qaMode) u.append("FINAL QUESTIONS PHASE: the interview is over and the customer may now ask you questions. If they say they have nothing more to ask, set noMore true. Otherwise answer their last message directly and briefly (general terms for products; their advisor for prices and personal advice), then ask if there is anything else they would like to ask. Do not ask interview questions. done = false.\n");
         if (sensitive) u.append("SENSITIVE DATA ALERT: the customer just mentioned ID, card, bank or password details. Do not repeat them. Kindly say they should not share those here and that their advisor will handle them securely, then continue.\n");
         u.append("\nCONVERSATION SO FAR:\n");
-        for (Turn t : turns) u.append("juno".equals(t.role()) ? "Juno: " : "Customer: ").append(t.text()).append("\n");
-        u.append("\nWhat does Juno say next?");
+        for (Turn t : turns) u.append("juno".equals(t.role()) ? "Spark: " : "Customer: ").append(t.text()).append("\n");
+        u.append("\nWhat does Spark say next?");
         var r = chatModel.call(new Prompt(
                 List.of(new SystemMessage((consentPhase ? SYSTEM + CONSENT_ADDENDUM : SYSTEM) + Wording.PROMPT_RULE), new UserMessage(u.toString())),
                 AzureOpenAiChatOptions.builder().responseFormat(AzureOpenAiResponseFormat.JSON).temperature(0.6).maxTokens(260).build()));
@@ -323,7 +323,7 @@ public class JunoService {
             "\\$|S\\$|SGD|%|per annum|per year|a year|premium of|illustrat|for example|as an example|\\d{3,}", java.util.regex.Pattern.CASE_INSENSITIVE);
 
     /**
-     * Last line of defence: Juno never states a price, premium, return or percentage. Any sentence in its reply that
+     * Last line of defence: Spark never states a price, premium, return or percentage. Any sentence in its reply that
      * contains a money amount or percentage the CUSTOMER did not say themselves is dropped (customers' own figures may
      * be echoed back, e.g. their budget).
      */

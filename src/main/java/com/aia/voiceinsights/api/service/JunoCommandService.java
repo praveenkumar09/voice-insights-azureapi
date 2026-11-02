@@ -13,7 +13,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Juno mode: the advisor says "Hey Juno, open Follow-up" and Juno works out which action on the current screen that means. The page tells
+ * Spark mode: the advisor says "Hey Spark, open Follow-up" and Spark works out which action on the current screen that means. The page tells
  * this service what it can do right now (its actions and their parameters); this service only picks one and fills in its parameters. It
  * never does anything itself: the page decides whether to ask first (only when an action changes data) and then carries it out.
  */
@@ -41,12 +41,12 @@ public class JunoCommandService {
     private static final String NONE_SAY = "I can't do that here.";
 
     private static final String SYSTEM = """
-            You are Juno, a voice assistant in a financial advisor's web app, like Siri. Choose ONE action from AVAILABLE ACTIONS for what the
+            You are Spark, a voice assistant in a financial advisor's web app, like Siri. Choose ONE action from AVAILABLE ACTIONS for what the
             advisor said, or none. Reply with ONLY JSON, no fences, as short as possible:
             {"action":"<id or none>","params":{"<name>":"<value>"},"say":"","ask":""}
 
-            - The words come from speech recognition in an office and can be slightly wrong ("debrief" heard as "deprive", "Juno" as "you
-              know"). Pick the action closest in meaning and sound. "Debrief with Juno" is a mode name, so a second "Juno" belongs to it.
+            - The words come from speech recognition in an office and can be slightly wrong ("debrief" heard as "deprive", "Spark" as "you
+              know"). Pick the action closest in meaning and sound. "Debrief with Spark" is a mode name, so a second "Spark" belongs to it.
             - Only listed ids. An "enum" parameter must be exactly one of its values ("follow up" is "follow_up"; "chinese" is "zh"). A
               "string" parameter is the advisor's own words.
             - "say" stays EMPTY unless the action is "none" (or a required parameter is missing): then one short reply naming two or three

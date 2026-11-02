@@ -17,7 +17,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Juno's voice: turns a line of text into warm spoken audio with Azure OpenAI's gpt-4o-mini-tts. The model takes
+ * Spark's voice: turns a line of text into warm spoken audio with Azure OpenAI's gpt-4o-mini-tts. The model takes
  * written style instructions, so each line is spoken in a tone that fits the moment (gentle after a worry, bright for
  * a greeting). Lines are cached, so the fixed ones (greeting, "Mm-hm", goodbye) cost nothing after the first time.
  * The API key never leaves the server — the browser only receives audio.
@@ -29,7 +29,7 @@ public class JunoSpeechService {
     private static final int MAX_CHARS = 700;
     private static final int MAX_CACHED = 400;
 
-    private static final String BASE = "You are Juno, a warm, caring assistant talking out loud with someone you are meeting for the first time. "
+    private static final String BASE = "You are Spark, a warm, caring assistant talking out loud with someone you are meeting for the first time. "
             + "Sound like a kind, attentive person, never like a call-centre script or an announcement. Speak at a natural conversational pace: "
             + "relaxed but not slow, the way people really talk, with brief pauses at commas and sentence ends. Keep exactly the same voice, "
             + "warmth and pitch even for very short replies such as 'Mm, I see.' Say 'AIA' as three separate letters, A-I-A.";

@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Everything Juno says that is fixed (the greeting, the consent questions, goodbyes, the "Mm-hm"s), in each language it
+ * Everything Spark says that is fixed (the greeting, the consent questions, goodbyes, the "Mm-hm"s), in each language it
  * speaks. One place, so the server and the browser always agree. English is the default.
  *
  * NOTE for review: the Mandarin, Malay and Tamil wording should be checked by native speakers (and by Compliance for the
@@ -22,7 +22,7 @@ public final class JunoPhrases {
 
     private static final Map<String, Phrases> ALL = Map.of(
             "en", new Phrases("English",
-                    "Hello, I'm Juno, your AIA Singapore digital suggestion assistant. Before we begin, with your permission I'd like to record and analyse our conversation, so your advisor can help you better. Is that all right?",
+                    "Hello, I'm Spark, your AIA Singapore digital suggestion assistant. Before we begin, with your permission I'd like to record and analyse our conversation, so your advisor can help you better. Is that all right?",
                     "Of course, that's completely fine. I won't keep anything from this chat. Your advisor will be happy to take it from here.",
                     "Sorry, I didn't quite catch that. Is it all right if I record and analyse our chat, so your advisor can help you better? A simple yes or no is fine.",
                     "Thank you. To start, could I have your name?",
@@ -37,7 +37,7 @@ public final class JunoPhrases {
                     "Yes, that's fine", "No thanks", "Yes, that is fine.", "No, I would rather not.",
                     List.of("Mm, I see.", "Okay, got it.", "Right, thank you.", "I see, thanks.", "Alright, got it.")),
             "zh", new Phrases("Mandarin Chinese (Simplified)",
-                    "您好，我是 Juno，AIA 新加坡的数字建议助手。在开始之前，如果您同意，我想录下并分析我们的对话，让您的顾问能更好地帮到您。可以吗？",
+                    "您好，我是 Spark，AIA 新加坡的数字建议助手。在开始之前，如果您同意，我想录下并分析我们的对话，让您的顾问能更好地帮到您。可以吗？",
                     "没问题，完全可以。这次谈话我不会保留任何内容。您的顾问会很乐意接手。",
                     "抱歉，我没听清楚。请问我可以录下并分析我们的对话，让您的顾问更好地帮助您吗？回答“可以”或“不可以”就行。",
                     "谢谢您。首先，请问您怎么称呼？",
@@ -52,7 +52,7 @@ public final class JunoPhrases {
                     "好的，可以", "不用了", "好的，可以。", "不用了，我不想被录音。",
                     List.of("嗯，我明白。", "好的，明白了。", "好的，谢谢。")),
             "ms", new Phrases("Malay (Bahasa Melayu)",
-                    "Helo, saya Juno, pembantu digital dan cadangan AIA Singapura. Sebelum kita mulakan, dengan kebenaran anda, saya ingin merakam dan menganalisis perbualan kita supaya penasihat anda dapat membantu anda dengan lebih baik. Adakah itu tidak mengapa?",
+                    "Helo, saya Spark, pembantu digital dan cadangan AIA Singapura. Sebelum kita mulakan, dengan kebenaran anda, saya ingin merakam dan menganalisis perbualan kita supaya penasihat anda dapat membantu anda dengan lebih baik. Adakah itu tidak mengapa?",
                     "Baiklah, tidak mengapa langsung. Saya tidak akan menyimpan apa-apa daripada perbualan ini. Penasihat anda akan dengan senang hati meneruskannya.",
                     "Maaf, saya kurang jelas. Bolehkah saya merakam dan menganalisis perbualan kita supaya penasihat anda dapat membantu anda dengan lebih baik? Jawapan ya atau tidak sudah memadai.",
                     "Terima kasih. Untuk bermula, boleh saya tahu nama anda?",

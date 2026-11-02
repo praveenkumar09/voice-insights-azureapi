@@ -30,7 +30,7 @@ public class RehearsalService {
 
     public record Point(String label, String text) {}
 
-    /** {@code script}: what Juno says aloud. {@code points}: the same briefing as cards. {@code customerVoice}: which voice the simulated customer uses. */
+    /** {@code script}: what Spark says aloud. {@code points}: the same briefing as cards. {@code customerVoice}: which voice the simulated customer uses. */
     public record Brief(String customerName, String script, List<Point> points, String customerVoice, boolean thin) {}
 
     public record Line(String role, String text) {}
@@ -51,7 +51,7 @@ public class RehearsalService {
     private record LlmTurn(String say, String mood, Coach coach) {}
 
     private static final String BRIEF_SYSTEM = """
-            You are Juno, an assistant for a financial advisor in Singapore. The advisor has just debriefed a customer meeting and is about
+            You are Spark, an assistant for a financial advisor in Singapore. The advisor has just debriefed a customer meeting and is about
             to prepare for the NEXT meeting with the same customer. Give them a short briefing, as a sharp colleague would.
 
             Respond with ONLY a JSON object, no markdown fences:

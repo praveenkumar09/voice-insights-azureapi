@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 
-/** "Talk it through with Juno": the advisor questions the suggestions of a finished run and Juno answers, sentence by sentence. */
+/** "Talk it through with Spark": the advisor questions the suggestions of a finished run and Spark answers, sentence by sentence. */
 @RestController
 @RequestMapping("/api/recommendations/{runId}/ask")
 public class JunoAskController {

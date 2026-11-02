@@ -103,12 +103,12 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         // ?mode=debrief: the advisor is dictating a summary after the meeting rather than the customer speaking live.
         String modeParam = org.springframework.web.util.UriComponentsBuilder.fromUri(wsSession.getUri())
                 .build().getQueryParams().getFirst("mode");
-        // ?mode=juno-debrief: the advisor dictates, then Juno asks them about the gaps. Analysed like a debrief.
+        // ?mode=juno-debrief: the advisor dictates, then Spark asks them about the gaps. Analysed like a debrief.
         boolean junoDebrief = "juno-debrief".equalsIgnoreCase(modeParam);
         boolean debrief = "debrief".equalsIgnoreCase(modeParam) || junoDebrief;
-        // ?mode=juno: the AI host (Juno) is talking with the customer; it is analysed like a live conversation.
+        // ?mode=juno: the AI host (Spark) is talking with the customer; it is analysed like a live conversation.
         boolean juno = "juno".equalsIgnoreCase(modeParam);
-        // ?mode=ask: the advisor is putting questions to Juno about a finished suggestion. It is only listening: nothing is
+        // ?mode=ask: the advisor is putting questions to Spark about a finished suggestion. It is only listening: nothing is
         // saved and nothing is analysed — the question text is all that matters.
         boolean ask = "ask".equalsIgnoreCase(modeParam);
         CustomerProfile fresh = new CustomerProfile();
@@ -177,7 +177,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     }
 
     /** The context prompt plus the name hint list — the model spells a name correctly far more often when it has seen it. */
-    /** A spoken command is over after this much quiet (a question for Juno waits longer, 1.1 s). */
+    /** A spoken command is over after this much quiet (a question for Spark waits longer, 1.1 s). */
     private static final int COMMAND_QUIET_MS = 800;
 
     private String transcriptionPrompt() {
@@ -199,7 +199,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     }
 
     /**
-     * A debrief with Juno sends the speech model NO topic prompt. The usual one lists names and insurance terms, and (for Juno)
+     * A debrief with Spark sends the speech model NO topic prompt. The usual one lists names and insurance terms, and (for Spark)
      * the names already mentioned; even a plain description ("an advisor dictating notes about a meeting") is enough for the
      * model to write plausible notes of its own when it hears room noise ("I met with Mr. Tan this afternoon… retirement
      * planning"), which then flow into the profile. With nothing to build on, noise yields at most a stray word. Names are
@@ -217,10 +217,10 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             + "For example: 女儿 (daughter), 退休 (retirement), 保险 (insurance), 不过 (but), isteri (wife), anak (child), amma (mother), pillai (child).";
 
     private String promptFor(VoiceSession vs, String dynamic) {
-        // Ask mode is also where Juno mode listens: the assistant's name is given so "Hey Juno" is spelled, not heard as "you know".
+        // Ask mode is also where Spark mode listens: the assistant's name is given so "Hey Spark" is spelled, not heard as "you know".
         if ("ASK".equals(vs.profile.getCaptureMode())) {
-            String name = "Juno is the assistant's name: \"Hey Juno\". ";
-            // Juno mode told us what can be said on this screen: that short list is the whole prompt. The generic insurance prompt and
+            String name = "Spark is the assistant's name: \"Hey Spark\". ";
+            // Spark mode told us what can be said on this screen: that short list is the whole prompt. The generic insurance prompt and
             // name list made the model invent insurance-sounding words for noisy commands ("debrief" heard as "catapult"); the list of
             // real commands makes it pick the nearest real one (measured: 3 of 12 -> 11 of 12 correct at -2 dB signal to noise).
             if (!vs.commandVocab.isBlank()) {
@@ -246,7 +246,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         if (c != null) c.setLanguage("en".equals(vs.lang) ? "en" : null);
     }
 
-    /** Juno mode (an ask session that has sent its command list): English, and a command is over after a short quiet. */
+    /** Spark mode (an ask session that has sent its command list): English, and a command is over after a short quiet. */
     private void applyCommandMode(VoiceSession vs) {
         AzureOpenAiRealtimeTranscriptionClient c = vs.transcriptionClient;
         if (c == null || vs.commandVocab.isBlank()) return;
@@ -306,7 +306,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                         if (!"ASK".equals(vs.profile.getCaptureMode()) && !vs.profile.getCaptureMode().equals("JUNO")) {
                             text = redact(ChineseScript.toSimplified(repairService.repair(vs.transcript.toString(), text)));
                         }
-                        // A debrief with Juno in English: a line in another script (Tamil, Chinese...) is the speech model
+                        // A debrief with Spark in English: a line in another script (Tamil, Chinese...) is the speech model
                         // inventing words from background noise, not the advisor. It is dropped before anything reads it.
                         // In every mode: a script nobody here speaks (Arabic, Cyrillic, Thai, Korean...) is invented from noise.
                         if (FOREIGN_SCRIPT.matcher(text).find()) {
@@ -329,7 +329,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                         vs.partial.setLength(0);
                         vs.transcript.append(text).append(" ");
                         sendJsonQuiet(wsSession, Map.of("type", "final_transcript", "text", text));
-                        if ("ASK".equals(vs.profile.getCaptureMode())) return; // a question for Juno: nothing to extract or analyse
+                        if ("ASK".equals(vs.profile.getCaptureMode())) return; // a question for Spark: nothing to extract or analyse
                         extractionExecutor.submit(() -> reExtractAndPush(wsSession, vs));
                         extractionExecutor.submit(() -> pushCopilot(wsSession, vs));
                     }
@@ -366,8 +366,8 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                         replaceTranscriptionClient(wsSession, vs);
                     }
                 });
-        // A debrief with Juno starts as a normal dictation (strict: little speech is never turned into words) and switches to
-        // conversational timing only when the advisor hands over to Juno (see the "conversational" message).
+        // A debrief with Spark starts as a normal dictation (strict: little speech is never turned into words) and switches to
+        // conversational timing only when the advisor hands over to Spark (see the "conversational" message).
         if ("JUNO".equals(vs.profile.getCaptureMode()) || "ASK".equals(vs.profile.getCaptureMode())) vs.transcriptionClient.setConversational(true);
         if (old != null && old.isConversational()) vs.transcriptionClient.setConversational(true);
         vs.transcriptionClient.setConfirming(vs.confirming); // a replaced connection keeps waiting for the same answer
@@ -376,7 +376,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         // the room, not them. (A live conversation has two voices at different distances, so it is judged more gently.)
         String mode = vs.profile.getCaptureMode();
         vs.transcriptionClient.setSingleSpeaker("DEBRIEF".equals(mode) || "JUNO_DEBRIEF".equals(mode));
-        // A question for Juno ends when the advisor has been quiet for a moment; the server judges that (against their own
+        // A question for Spark ends when the advisor has been quiet for a moment; the server judges that (against their own
         // level) and tells the browser, which asks the question once its words have come back.
         if ("ASK".equals(mode)) vs.transcriptionClient.setUtteranceEnd(1100);
         applyCommandMode(vs);
@@ -421,7 +421,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             vs.transcriptionClient.commitAndNotify();
             return;
         }
-        // "conversational": the advisor handed over to Juno, whose questions are answered in short replies.
+        // "conversational": the advisor handed over to Spark, whose questions are answered in short replies.
         if ("conversational".equals(node.path("type").asText("")) && "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()) && vs.transcriptionClient != null) {
             vs.transcriptionClient.setConversational(node.path("on").asBoolean(true));
             return;
@@ -432,13 +432,13 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             if (vs.transcriptionClient != null) vs.transcriptionClient.setFarMic(vs.farMic);
             return;
         }
-        // "confirming": Juno mode is waiting for a yes or no, so a short answer has to be heard clearly (see the transcription client).
+        // "confirming": Spark mode is waiting for a yes or no, so a short answer has to be heard clearly (see the transcription client).
         if ("confirming".equals(node.path("type").asText("")) && "ASK".equals(vs.profile.getCaptureMode())) {
             vs.confirming = node.path("on").asBoolean(false);
             if (vs.transcriptionClient != null) vs.transcriptionClient.setConfirming(vs.confirming);
             return;
         }
-        // "commands": Juno mode lists what can be said on the current screen. It becomes the speech model's prompt (see promptFor).
+        // "commands": Spark mode lists what can be said on the current screen. It becomes the speech model's prompt (see promptFor).
         if ("commands".equals(node.path("type").asText("")) && "ASK".equals(vs.profile.getCaptureMode())) {
             StringBuilder sb = new StringBuilder();
             for (JsonNode ph : node.path("phrases")) {
@@ -459,13 +459,13 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             if (vs.transcriptionClient != null) vs.transcriptionClient.updatePrompt(promptFor(vs, nameContext(vs, "")));
             return;
         }
-        // "agent_say": Juno spoke. Its words go into the transcript, labelled, so the customer's short answers
+        // "agent_say": Spark spoke. Its words go into the transcript, labelled, so the customer's short answers
         // ("two, a boy and a girl") are analysed together with the question they answer.
         if ("agent_say".equals(node.path("type").asText("")) && ("JUNO".equals(vs.profile.getCaptureMode()) || "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()))) {
             String said = node.path("text").asText("").strip();
             // In a debrief the person answering is the advisor; in a hosted conversation it is the customer.
             String answerer = "JUNO_DEBRIEF".equals(vs.profile.getCaptureMode()) ? "[Advisor] " : "[Customer] ";
-            if (!said.isEmpty() && said.length() < 600) vs.transcript.append("\n[Juno] ").append(said).append("\n").append(answerer);
+            if (!said.isEmpty() && said.length() < 600) vs.transcript.append("\n[Spark] ").append(said).append("\n").append(answerer);
             if (!said.isEmpty() && vs.transcriptionClient != null) vs.transcriptionClient.updatePrompt(promptFor(vs, nameContext(vs, said)));
             return;
         }
@@ -483,7 +483,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             // Safety flush: server_vad auto-commits at real pauses, but if the
             // agent stops mid-utterance (no pause yet when they hit stop),
             // nothing has committed that trailing bit yet — commit it explicitly.
-            // "flush": false once Juno has read back and the debrief is over: whatever the microphone heard since is noise, and
+            // "flush": false once Spark has read back and the debrief is over: whatever the microphone heard since is noise, and
             // committing it made the speech model invent a paragraph that was filed as the advisor's words.
             if (node.path("flush").asBoolean(true) && vs.transcriptionClient != null) vs.transcriptionClient.commit();
             extractionExecutor.submit(() -> finalizeSession(wsSession, vs));
@@ -496,7 +496,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         if (vs == null) return;
         vs.intentionalClose = true; // the browser side is gone either way — never attempt to reconnect after this
         if (vs.transcriptionClient != null) vs.transcriptionClient.close();
-        // A Juno conversation that was abandoned (page closed, consent never completed) keeps nothing.
+        // A Spark conversation that was abandoned (page closed, consent never completed) keeps nothing.
         if (!vs.finalized && "JUNO".equals(vs.profile.getCaptureMode())) profileStore.delete(vs.profile.getId());
     }
 
@@ -599,7 +599,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             java.util.regex.Pattern.CASE_INSENSITIVE);
 
     /**
-     * What the speech model should know for the answer Juno is waiting for: if Juno just asked about names or family,
+     * What the speech model should know for the answer Spark is waiting for: if Spark just asked about names or family,
      * personal names are coming, and the names already heard keep their spelling consistent through the conversation.
      */
     private String nameContext(VoiceSession vs, String junoLine) {
@@ -628,11 +628,11 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         final CustomerProfile profile;
         volatile AzureOpenAiRealtimeTranscriptionClient transcriptionClient;
         volatile boolean intentionalClose = false;
-        /** Set once the session has been finalized (the conversation completed): an unfinished Juno session is discarded. */
+        /** Set once the session has been finalized (the conversation completed): an unfinished Spark session is discarded. */
         volatile boolean finalized = false;
-        /** The language Juno is speaking with the customer (en, zh, ms, ta). */
+        /** The language Spark is speaking with the customer (en, zh, ms, ta). */
         volatile String lang = "en";
-        /** Juno mode: what the advisor can say on the current screen (comma-separated), or empty. */
+        /** Spark mode: what the advisor can say on the current screen (comma-separated), or empty. */
         volatile String commandVocab = "";
         volatile boolean confirming = false;
         volatile boolean farMic = false;

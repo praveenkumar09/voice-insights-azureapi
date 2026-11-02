@@ -26,11 +26,11 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Juno as the advisor's debrief partner. The advisor has dictated what happened in the meeting; Juno reads it,
+ * Spark as the advisor's debrief partner. The advisor has dictated what happened in the meeting; Spark reads it,
  * finds what is missing or unclear, and asks a few short questions, one at a time, then reads back what it has.
  * <p>
  * The shape is fixed here, not left to the model: a hard cap on the number of questions, a scripted-length
- * read-back at the end, and an advisor who can always say "skip" or "that's enough". Juno only talks; it has no
+ * read-back at the end, and an advisor who can always say "skip" or "that's enough". Spark only talks; it has no
  * way to start the analysis, which stays a button for the advisor.
  */
 @Service
@@ -38,7 +38,7 @@ public class JunoDebriefService {
 
     private static final Logger log = LoggerFactory.getLogger(JunoDebriefService.class);
 
-    /** Juno asks at most this many questions (the opening one included); then it reads back and finishes. */
+    /** Spark asks at most this many questions (the opening one included); then it reads back and finishes. */
     static final int MAX_QUESTIONS = 5;
 
     /** "That's enough", "I'm done", "let's wrap up"... said at the start OR the end of an answer ("...next Friday. That's enough, thank you."). */
@@ -47,7 +47,7 @@ public class JunoDebriefService {
     private static final java.util.regex.Pattern ENOUGH = java.util.regex.Pattern.compile(
             "^\\W*" + STOP_WORDS + "\\b|\\b" + STOP_WORDS + "\\W*((thank you|thanks)\\W*)?$", java.util.regex.Pattern.CASE_INSENSITIVE);
 
-    /** {@code dictation}: what the advisor said before handing over. {@code turns}: Juno and the advisor since ("juno" / "advisor"). */
+    /** {@code dictation}: what the advisor said before handing over. {@code turns}: Spark and the advisor since ("juno" / "advisor"). */
     public record Request(String profileId, String dictation, List<JunoService.Turn> turns, String lang) {}
 
     /** Same fields as {@link JunoService.Response} plus the fact-find readiness the meter on screen shows. */
@@ -61,7 +61,7 @@ public class JunoDebriefService {
     private record Llm(String say, List<String> covered, Boolean done, String tone, Boolean open) {}
 
     private static final String SYSTEM = """
-            You are Juno, the AIA Singapore assistant to a financial ADVISOR. The advisor has just finished a meeting with a
+            You are Spark, the AIA Singapore assistant to a financial ADVISOR. The advisor has just finished a meeting with a
             customer and has dictated what happened. You are talking with the ADVISOR (a colleague), never with the customer.
             Your job is to make sure the record of the meeting is complete and correct, by asking a few short, useful
             questions about what is missing or unclear. Everything you write is SPOKEN, so write the way people talk.
@@ -180,8 +180,8 @@ public class JunoDebriefService {
     }
 
     /**
-     * Called the moment the advisor taps "over to Juno": the product lookup (an embedding plus a few searches) runs while the
-     * last words of the dictation are still being transcribed, so it adds nothing to the wait for Juno's first line.
+     * Called the moment the advisor taps "over to Spark": the product lookup (an embedding plus a few searches) runs while the
+     * last words of the dictation are still being transcribed, so it adds nothing to the wait for Spark's first line.
      */
     public void prepare(String profileId, String dictation) {
         if (profileId == null || profileId.isBlank()) return;
@@ -217,7 +217,7 @@ public class JunoDebriefService {
             Llm llm = call(req, turns, opening, wrap, asked, profile, "", wrap && now != null ? now : prev,
                     pid == null ? null : baselineReadiness.get(pid));
             String first = firstName(profile);
-            // Reliability: never repeat a line Juno has already said (a stuck model would read as a stuck assistant).
+            // Reliability: never repeat a line Spark has already said (a stuck model would read as a stuck assistant).
             if (!wrap && !Boolean.TRUE.equals(llm.done()) && repeatsEarlierLine(llm.say(), turns)) {
                 llm = call(req, turns, opening, wrap, asked, profile,
                         "Your previous attempt repeated something you already said. Say something different: move on to the next most valuable gap, or wrap up.",
@@ -265,11 +265,11 @@ public class JunoDebriefService {
         u.append("\nDICTATION (what the advisor said before handing over):\n").append(dictation.isEmpty() ? "(nothing was said)" : dictation).append("\n");
         if (!turns.isEmpty()) {
             u.append("\nCONVERSATION SINCE:\n");
-            for (JunoService.Turn t : turns) u.append("juno".equals(t.role()) ? "Juno: " : "Advisor: ").append(t.text()).append("\n");
+            for (JunoService.Turn t : turns) u.append("juno".equals(t.role()) ? "Spark: " : "Advisor: ").append(t.text()).append("\n");
         }
         u.append("\n").append(opening ? OPENING : wrap ? WRAP_UP : NEXT.formatted(asked, MAX_QUESTIONS));
         if (!extraNote.isEmpty()) u.append("\n").append(extraNote);
-        u.append("\nWhat does Juno say next?");
+        u.append("\nWhat does Spark say next?");
         var r = chatModel.call(new Prompt(
                 List.of(new SystemMessage(SYSTEM + Wording.PROMPT_RULE), new UserMessage(u.toString())),
                 AzureOpenAiChatOptions.builder().responseFormat(AzureOpenAiResponseFormat.JSON).temperature(0.4).maxTokens(240).build()));
@@ -291,9 +291,9 @@ public class JunoDebriefService {
     }
 
     /**
-     * What applying for the products this customer's goals point to typically depends on, from the product documents, so Juno
+     * What applying for the products this customer's goals point to typically depends on, from the product documents, so Spark
      * asks for the missing fact that matters most. Built from the extracted profile (not the raw dictation, which can hold stray
-     * words) and kept per debrief. Sentences carrying figures are dropped: Juno must never repeat a price.
+     * words) and kept per debrief. Sentences carrying figures are dropped: Spark must never repeat a price.
      */
     private String productNeeds(String profileId, CustomerProfile profile, String dictation) {
         if (profileId == null) return lookUpProductNeeds(null, profile, dictation);
@@ -339,7 +339,7 @@ public class JunoDebriefService {
                     if (!facts.isEmpty()) sb.append("- ").append(name).append(": ").append(facts).append('\n');
                 }
                 if (!sb.isEmpty()) out = sb.toString();
-                log.info("Juno debrief: product needs for profile {}: {}", profileId, out.replace('\n', ' '));
+                log.info("Spark debrief: product needs for profile {}: {}", profileId, out.replace('\n', ' '));
             }
         } catch (Exception e) {
             log.warn("JunoDebriefService: product lookup failed: {}", e.toString());
@@ -365,7 +365,7 @@ public class JunoDebriefService {
     }
 
     /**
-     * Juno talks WITH the advisor about the customer, so it never greets or thanks the advisor by the customer's name
+     * Spark talks WITH the advisor about the customer, so it never greets or thanks the advisor by the customer's name
      * ("Thanks Marcus.", "Alright, thanks for clarifying, Marcus."): that name is dropped from such an opener.
      */
     static String neverAddressAs(String say, String customerFirstName) {

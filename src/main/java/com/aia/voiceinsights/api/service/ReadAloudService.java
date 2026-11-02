@@ -17,7 +17,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * What Juno reads aloud, for an advisor who is driving and cannot look at a screen. Two kinds of reading:
+ * What Spark reads aloud, for an advisor who is driving and cannot look at a screen. Two kinds of reading:
  * <ul>
  *   <li><b>The documents themselves</b> (the advisory report, and each part of the advice pack), turned into plain spoken English
  *       without changing what they say: tables, symbols and links become words, nothing is added, left out or reworded.</li>

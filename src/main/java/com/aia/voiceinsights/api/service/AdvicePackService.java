@@ -309,9 +309,9 @@ public class AdvicePackService {
 
     private List<FactFindSection> factFind(Inputs in) {
         CustomerProfile p = in.profile();
-        // In a Juno debrief the transcript also holds Juno's own lines (its questions and its read-back, an AI's paraphrase). Those are
+        // In a Spark debrief the transcript also holds Spark's own lines (its questions and its read-back, an AI's paraphrase). Those are
         // never evidence of what the customer is like, so only the advisor's words go to the fact-find extraction. Short answers that need
-        // Juno's question for context are mapped from Juno's own checked facts below.
+        // Spark's question for context are mapped from Spark's own checked facts below.
         String evidence = "JUNO_DEBRIEF".equals(p.getCaptureMode()) ? advisorWordsOnly(in.transcript()) : in.transcript();
         String hay = norm(evidence);
         Map<String, DraftField> drafted = new LinkedHashMap<>();
@@ -320,8 +320,8 @@ public class AdvicePackService {
             for (DraftField f : safe(d.fields())) if (f != null && f.key() != null) drafted.put(f.key(), f);
         }
 
-        // A Juno debrief only: what Juno asked and the advisor answered. The extraction above wants a word-for-word quote of at least six
-        // characters, which "No." / "None." (the usual answer to "any loans?") can never satisfy, so those answers are mapped from Juno's own
+        // A Spark debrief only: what Spark asked and the advisor answered. The extraction above wants a word-for-word quote of at least six
+        // characters, which "No." / "None." (the usual answer to "any loans?") can never satisfy, so those answers are mapped from Spark's own
         // checked facts. Other capture modes do not take this path.
         Map<String, DebriefReadinessService.Fact> fromJuno = "JUNO_DEBRIEF".equals(p.getCaptureMode())
                 ? debriefReadiness.factsFromTranscript(in.transcript()) : Map.of();
@@ -344,10 +344,10 @@ public class AdvicePackService {
         return out;
     }
 
-    /** The transcript of a Juno debrief without Juno's lines: the dictation and the advisor's answers only. */
+    /** The transcript of a Spark debrief without Spark's lines: the dictation and the advisor's answers only. */
     static String advisorWordsOnly(String raw) {
         if (raw == null) return "";
-        return raw.replaceAll("(?s)\\[Juno\\].*?(?=\\[Advisor\\]|$)", " ").replace("[Advisor]", " ").replaceAll("\\s+", " ").strip();
+        return raw.replaceAll("(?s)\\[Spark\\].*?(?=\\[Advisor\\]|$)", " ").replace("[Advisor]", " ").replaceAll("\\s+", " ").strip();
     }
 
     private FactFindField field(Spec s, CustomerProfile p, DraftField d, String hay) {

@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.time.Duration;
 import java.util.Map;
 
-/** What Juno reads aloud for a finished suggestion run: a briefing, the report, or a part of the advice pack. Read-only. */
+/** What Spark reads aloud for a finished suggestion run: a briefing, the report, or a part of the advice pack. Read-only. */
 @RestController
 @RequestMapping("/api/juno/reading")
 public class ReadAloudController {

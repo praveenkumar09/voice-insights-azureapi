@@ -78,11 +78,11 @@ public class ProfileExtractionService {
             you extract is about the CUSTOMER (the person being described), never about the advisor.
             """;
 
-    /** In a debrief with Juno: the advisor's dictation, then Juno's questions and the advisor's answers, with the speech model's stray lines to ignore. */
+    /** In a debrief with Spark: the advisor's dictation, then Spark's questions and the advisor's answers, with the speech model's stray lines to ignore. */
     private static final String JUNO_DEBRIEF_NOTE = """
 
-            The transcript may also contain lines labelled [Juno] (an AI assistant's questions to the advisor) and [Advisor]
-            (the advisor's answers). Take facts ONLY from the advisor's words (unlabelled or [Advisor]); a [Juno] line is
+            The transcript may also contain lines labelled [Spark] (an AI assistant's questions to the advisor) and [Advisor]
+            (the advisor's answers). Take facts ONLY from the advisor's words (unlabelled or [Advisor]); a [Spark] line is
             a question or read-back, never a source of facts.
             The transcript comes from speech recognition. After a pause or in background noise it sometimes invents stray lines
             that have nothing to do with the meeting: a greeting, a stray name, a list of insurance terms ("CPF, MediSave,
@@ -106,7 +106,7 @@ public class ProfileExtractionService {
         extractInto(profile, transcript, debrief, false);
     }
 
-    /** {@code junoDebrief}: the advisor is working with Juno, so the transcript carries labels and possible stray lines. */
+    /** {@code junoDebrief}: the advisor is working with Spark, so the transcript carries labels and possible stray lines. */
     public void extractInto(CustomerProfile profile, String transcript, boolean debrief, boolean junoDebrief) {
         if (transcript == null || transcript.isBlank()) return;
 

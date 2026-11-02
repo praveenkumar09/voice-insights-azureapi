@@ -25,7 +25,7 @@ import java.util.function.BiConsumer;
 
 /**
  * How much of the advice pack's fact-find (the same 26 fields) a debrief has captured so far, so the advisor sees the number
- * climb while Juno asks its questions, and Juno asks for the most valuable missing field first.
+ * climb while Spark asks its questions, and Spark asks for the most valuable missing field first.
  * <p>
  * Nine fields come straight from the extracted profile and life map; the rest are judged from what the advisor said, by a small
  * model call that may only return a field when the notes state it. It is an estimate: the advice pack makes the final count.
@@ -35,10 +35,10 @@ public class DebriefReadinessService {
 
     private static final Logger log = LoggerFactory.getLogger(DebriefReadinessService.class);
 
-    /** A fact-find field Juno's debrief established: the value, and the advisor's own words that support it. */
+    /** A fact-find field Spark's debrief established: the value, and the advisor's own words that support it. */
     public record Fact(String key, String value, String quote) {}
 
-    /** {@code baseline}: the count right after the dictation (before Juno's questions); null until known. */
+    /** {@code baseline}: the count right after the dictation (before Spark's questions); null until known. */
     public record Readiness(int captured, int total, Integer baseline, List<String> missing) {
         public Readiness withBaseline(Integer b) { return new Readiness(captured, total, b, missing); }
     }
@@ -94,8 +94,8 @@ public class DebriefReadinessService {
     /** Same discipline as the advice pack's own fact-find: a field counts only with a value AND a quote that is really in the notes. */
     private static final String SYSTEM = """
             You check which items of a financial fact-find an advisor's notes about a customer state. The notes are the advisor's
-            dictation, then (after a blank line) a conversation where Juno, an AI assistant, asks the advisor questions and the
-            advisor answers. Facts come only from the advisor's words, never from Juno's questions.
+            dictation, then (after a blank line) a conversation where Spark, an AI assistant, asks the advisor questions and the
+            advisor answers. Facts come only from the advisor's words, never from Spark's questions.
             For each key below that the notes state (or clearly imply), return its value and a QUOTE: a short passage (at most
             25 words) copied WORD FOR WORD from the advisor's words in the notes (keep values and quotes short). If the notes do not say, leave the key out.
             An explicit "none" or "no" counts as stated (for example "no life insurance", "does not smoke", "no health problems",
@@ -137,7 +137,7 @@ public class DebriefReadinessService {
             StringBuilder notes = new StringBuilder(dictation == null ? "" : dictation.strip());
             if (turns != null && !turns.isEmpty()) {
                 notes.append("\n\n");
-                for (JunoService.Turn t : turns) notes.append("juno".equals(t.role()) ? "Juno: " : "Advisor: ").append(t.text()).append('\n');
+                for (JunoService.Turn t : turns) notes.append("juno".equals(t.role()) ? "Spark: " : "Advisor: ").append(t.text()).append('\n');
             }
             String text = notes.length() > 5000 ? notes.substring(notes.length() - 5000) : notes.toString();
             if (!text.isBlank()) {
@@ -164,7 +164,7 @@ public class DebriefReadinessService {
         var r = chatModel.call(new Prompt(List.of(new SystemMessage(SYSTEM), new UserMessage("NOTES:\n" + text)),
                 AzureOpenAiChatOptions.builder().responseFormat(AzureOpenAiResponseFormat.JSON).temperature(0.0).maxTokens(700).build()));
         Llm llm = mapper.readValue(r.getResult().getOutput().getText(), Llm.class);
-        String hay = norm(advisorText); // evidence is the advisor's words only: never Juno's questions or read-back
+        String hay = norm(advisorText); // evidence is the advisor's words only: never Spark's questions or read-back
         Map<String, Fact> out = new LinkedHashMap<>();
         if (llm.fields() != null) for (Field f : llm.fields()) {
             if (f == null || f.key() == null || !JUDGED.contains(f.key())) continue;
@@ -185,24 +185,24 @@ public class DebriefReadinessService {
     }
 
     /**
-     * The facts a stored Juno-debrief transcript ("dictation, then [Juno] question / [Advisor] answer lines") establishes. The advice pack
-     * uses these for fields its own extraction left blank, so a question Juno asked and the advisor answered always reaches the pack,
+     * The facts a stored Spark-debrief transcript ("dictation, then [Spark] question / [Advisor] answer lines") establishes. The advice pack
+     * uses these for fields its own extraction left blank, so a question Spark asked and the advisor answered always reaches the pack,
      * even when the answer is a single word that the pack's own word-for-word quote rule would reject.
      */
     public Map<String, Fact> factsFromTranscript(String raw) {
         try {
             if (raw == null || raw.isBlank()) return Map.of();
-            int i = raw.indexOf("[Juno]");
+            int i = raw.indexOf("[Spark]");
             String dictation = i < 0 ? raw : raw.substring(0, i);
             StringBuilder notes = new StringBuilder(dictation.strip());
             StringBuilder advisor = new StringBuilder(dictation);
             if (i >= 0) {
                 notes.append("\n\n");
-                var m = java.util.regex.Pattern.compile("\\[(Juno|Advisor)\\]\\s*(.*?)(?=\\[(?:Juno|Advisor)\\]|$)", java.util.regex.Pattern.DOTALL).matcher(raw.substring(i));
+                var m = java.util.regex.Pattern.compile("\\[(Spark|Advisor)\\]\\s*(.*?)(?=\\[(?:Spark|Advisor)\\]|$)", java.util.regex.Pattern.DOTALL).matcher(raw.substring(i));
                 while (m.find()) {
                     String t = m.group(2).strip();
-                    if (!t.isEmpty()) notes.append("Juno".equals(m.group(1)) ? "Juno: " : "Advisor: ").append(t).append('\n');
-                    if (!t.isEmpty() && !"Juno".equals(m.group(1))) advisor.append(' ').append(t);
+                    if (!t.isEmpty()) notes.append("Spark".equals(m.group(1)) ? "Spark: " : "Advisor: ").append(t).append('\n');
+                    if (!t.isEmpty() && !"Spark".equals(m.group(1))) advisor.append(' ').append(t);
                 }
             }
             String text = notes.length() > 6000 ? notes.substring(notes.length() - 6000) : notes.toString();
