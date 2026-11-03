@@ -427,7 +427,8 @@ public class AzureOpenAiRealtimeTranscriptionClient {
         open.removeIf(p -> p.resolved.get()); // already answered by the fallback: nothing to carry over
         open.sort(java.util.Comparator.comparingLong(p -> p.seq));
         List<Object[]> out = new ArrayList<>();
-        for (Pending p : open) out.add(new Object[] {p.audio, p.overlap, p.seq});
+        // From here the new connection owns these segments: an answer still coming for them from this one (or from its plain-upload fallback) must not be delivered too.
+        for (Pending p : open) { p.resolved.set(true); out.add(new Object[] {p.audio, p.overlap, p.seq}); }
         for (Outgoing o : outbox) out.add(new Object[] {o.pieces(), o.overlap(), o.seq()});
         outbox.clear();
         awaitingId.clear();
@@ -740,6 +741,10 @@ public class AzureOpenAiRealtimeTranscriptionClient {
      * words at the end of {@code prev}, they are not repeated there and stay in {@code cur} where they belong.
      */
     static String trimRepeatedStart(String prev, String cur) {
+        // Two takes of the same audio often write a number differently: "42 ปี" in one, "สองปี" (words) in the other. Thai numbers in the earlier
+        // text are therefore compared as spoken words. A repeat that sits on a number may be shorter than other Thai repeats (see below).
+        boolean numberNearEnd = hasThai(prev) && java.util.regex.Pattern.compile("\\d").matcher(prev.substring(Math.max(0, prev.length() - 24))).find();
+        if (hasThai(prev)) prev = thaiNumbersAsWords(prev);
         List<String> p = new ArrayList<>();
         java.util.regex.Matcher pm = UNIT.matcher(prev);
         while (pm.find()) p.add(pm.group().toLowerCase(java.util.Locale.ROOT));
@@ -757,11 +762,46 @@ public class AzureOpenAiRealtimeTranscriptionClient {
                 boolean han = first >= 0x4E00 && first <= 0x9FFF;
                 boolean thai = first >= 0x0E00 && first <= 0x0E7F;
                 if (k == 1 && (han || thai || c.get(off).length() <= 3)) continue;
-                if (thai && k < 6) continue; // Thai units are single characters (vowel and tone marks count): a short coincidence such as "ครับ" is not a repeat
+                if (thai && k < (numberNearEnd ? 4 : 6)) continue; // Thai units are single characters (vowel and tone marks count): a short coincidence such as "ครับ" is not a repeat
                 return cur.substring(ends.get(off + k - 1)).replaceFirst("^[\\s,.;:!?，。；：！？-]+", "");
             }
         }
         return cur;
+    }
+
+    private static boolean hasThai(String text) {
+        return text.codePoints().anyMatch(c -> c >= 0x0E00 && c <= 0x0E7F);
+    }
+
+    private static final String[] THAI_DIGITS = {"ศูนย์", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า"};
+
+    /** Arabic numbers in a Thai text written as Thai says them: "42" as สี่สิบสอง, "120,000" as หนึ่งแสนสองหมื่น. */
+    static String thaiNumbersAsWords(String text) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\d[\\d,]*").matcher(text);
+        StringBuilder out = new StringBuilder();
+        while (m.find()) {
+            String digits = m.group().replace(",", "");
+            m.appendReplacement(out, digits.length() > 12 ? m.group() : thaiWords(Long.parseLong(digits)));
+        }
+        m.appendTail(out);
+        return out.toString();
+    }
+
+    private static String thaiWords(long n) {
+        if (n == 0) return THAI_DIGITS[0];
+        if (n >= 1_000_000) return thaiWords(n / 1_000_000) + "ล้าน" + (n % 1_000_000 == 0 ? "" : thaiWords(n % 1_000_000));
+        String[] places = {"", "สิบ", "ร้อย", "พัน", "หมื่น", "แสน"};
+        StringBuilder sb = new StringBuilder();
+        String digits = Long.toString(n);
+        for (int i = 0; i < digits.length(); i++) {
+            int d = digits.charAt(i) - '0';
+            int pos = digits.length() - 1 - i;
+            if (d == 0) continue;
+            if (pos == 1) sb.append(d == 1 ? "" : d == 2 ? "ยี่" : THAI_DIGITS[d]).append("สิบ");
+            else if (pos == 0) sb.append(d == 1 && n > 1 && digits.length() > 1 ? "เอ็ด" : THAI_DIGITS[d]);
+            else sb.append(THAI_DIGITS[d]).append(places[pos]);
+        }
+        return sb.toString();
     }
 
     /** An average word log-probability below this means the model was guessing. */

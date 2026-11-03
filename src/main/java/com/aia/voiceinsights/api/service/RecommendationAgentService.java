@@ -837,12 +837,8 @@ public class RecommendationAgentService {
         for (String name : shortlist.shortlistedProducts()) {
             ProtectionStory.DraftBenefit d = draft.products() == null ? null : draft.products().stream()
                     .filter(p -> p.name() != null && p.name().equalsIgnoreCase(name)).findFirst().orElse(null);
-            String evidence = validation.citations().stream().filter(c -> c.productName().equalsIgnoreCase(name))
-                    .map(c -> BusinessUnits.convertAmounts(c.excerpt())).reduce("", (a, b) -> a + " " + b).replace(",", ""); // in the unit's currency, as the model saw it
-            Long amount = null;
-            if (d != null && d.benefitAmountSgd() != null && evidence.contains(String.valueOf(d.benefitAmountSgd().longValue()))) {
-                amount = d.benefitAmountSgd().longValue();
-            }
+            List<String> excerpts = validation.citations().stream().filter(c -> c.productName().equalsIgnoreCase(name)).map(EvidenceCitation::excerpt).toList();
+            Long amount = d != null && benefitInEvidence(d.benefitAmountSgd(), excerpts) ? d.benefitAmountSgd().longValue() : null;
             benefits.add(new ProtectionStory.ProductBenefit(name, amount, d == null ? null : d.benefitNote(), BusinessUnits.current().currency()));
         }
 
@@ -876,6 +872,16 @@ public class RecommendationAgentService {
     private static final java.util.regex.Pattern FEAR_PHRASES = java.util.regex.Pattern.compile(
             "\\b(not around|pass(es|ed)? away|passing away|die[sd]?|dying|death|if something happens|if anything happens|something happens to you)\\b",
             java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /**
+     * A benefit amount the model wrote is kept only when that figure appears in the product evidence. The model was shown the evidence in the business
+     * unit's currency (see {@link BusinessUnits#convertAmounts}), so the figure is looked for in the evidence converted the same way.
+     */
+    static boolean benefitInEvidence(Number amount, List<String> excerpts) {
+        if (amount == null || amount.longValue() <= 0) return false;
+        String evidence = excerpts.stream().map(BusinessUnits::convertAmounts).reduce("", (a, b) -> a + " " + b).replace(",", "");
+        return java.util.regex.Pattern.compile("(?<![\\d.])" + amount.longValue() + "(?![\\d])").matcher(evidence).find();
+    }
 
     /**
      * The Goals and plan page is customer-facing, so it gets the same second-pass compliance review as the

@@ -256,7 +256,7 @@ public class JunoService {
 
     private Llm call(Request req, List<Turn> turns, boolean consentPhase, boolean mustWrapUp, boolean qaMode, boolean sensitive) throws Exception {
         StringBuilder u = new StringBuilder();
-        u.append("LANGUAGE: ").append(JunoPhrases.of(req.lang()).language()).append("\n");
+        u.append("LANGUAGE: ").append(JunoPhrases.of(req.lang()).language()).append("\n").append(Languages.lengthNote(req.lang()));
         if (!"en".equals(JunoPhrases.normalize(req.lang()))) u.append("STYLE: ").append(Languages.of(req.lang()).writingStyle()).append(" Speak to the customer, not about them.\n");
         CustomerProfile profile = req.profileId() == null ? null : profileStore.findById(req.profileId()).orElse(null);
         u.append("FACTS ALREADY KNOWN: ").append(profile == null ? "none yet" : copilotService.knownFacts(profile)).append("\n");

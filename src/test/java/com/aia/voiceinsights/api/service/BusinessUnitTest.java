@@ -120,4 +120,45 @@ class BusinessUnitTest {
         BusinessUnits.setCurrent("sg");
         assertTrue(com.aia.voiceinsights.api.voice.VoiceWebSocketHandler.mixedLanguageHint().startsWith("Singapore English"));
     }
+
+    @Test
+    void nameHintsFollowTheLanguagesThatAreOn() {
+        Languages.setEnabled(List.of("en", "th"));
+        assertTrue(Languages.nameHints().contains("Somchai"));
+        assertFalse(Languages.nameHints().contains("Nguyen"));
+        Languages.setEnabled(List.of("en", "ms"));
+        assertEquals("", Languages.nameHints());
+        Languages.setEnabled(Languages.all().stream().map(Languages.Lang::code).toList());
+        assertTrue(Languages.nameHints().contains("Somchai") && Languages.nameHints().contains("Dela Cruz") && Languages.nameHints().contains("Nguyen"));
+        assertTrue(Languages.nameHints().length() < 160, "leaves room for the Singapore list in the 1,000-character prompt");
+    }
+
+    @Test
+    void aBenefitAmountIsCheckedAgainstTheEvidenceInTheUnitsCurrency() {
+        List<String> excerpts = List.of("Death benefit: sum assured of SGD 100,000 payable on death or TPD.", "Minimum premium S$300 a month.");
+        assertTrue(RecommendationAgentService.benefitInEvidence(100000, excerpts));
+        assertFalse(RecommendationAgentService.benefitInEvidence(2600000, excerpts), "Singapore: the SGD figure is the one in the documents");
+        BusinessUnits.setCurrent("th");
+        assertTrue(RecommendationAgentService.benefitInEvidence(2600000, excerpts), "Thailand: the model saw THB 2,600,000 and wrote that");
+        assertFalse(RecommendationAgentService.benefitInEvidence(100000, excerpts));
+        assertTrue(RecommendationAgentService.benefitInEvidence(7800, excerpts));
+        assertFalse(RecommendationAgentService.benefitInEvidence(null, excerpts));
+        assertFalse(RecommendationAgentService.benefitInEvidence(260, excerpts), "a figure inside a bigger one does not count");
+    }
+
+    @Test
+    void languagesWithoutSpacesGetTheirLengthsInCharacters() {
+        assertTrue(Languages.lengthNote("th").contains("150 characters"));
+        assertTrue(Languages.lengthNote("zh").contains("70 characters"));
+        for (String l : List.of("en", "ms", "ta")) assertEquals("", Languages.lengthNote(l), l);
+        for (var lang : Languages.all()) assertTrue(lang.sttPrompt() == null || lang.sttPrompt().length() < 700, lang.code() + ": the whole prompt must stay under 1,024 characters");
+    }
+
+    @Test
+    void filipinoMustBeTagalogAndVietnameseAndFilipinoLinesAreBounded() {
+        assertTrue(Languages.of("fil").writingStyle().contains("Never write a whole sentence"));
+        assertTrue(Languages.styleNote("fil").startsWith("STYLE: "));
+        assertEquals("", Languages.styleNote("en"));
+        assertTrue(Languages.lengthNote("vi").contains("45 words") && Languages.lengthNote("fil").contains("45 words"));
+    }
 }

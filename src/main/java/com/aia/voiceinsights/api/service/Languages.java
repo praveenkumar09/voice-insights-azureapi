@@ -39,19 +39,19 @@ public final class Languages {
         add(new Lang("ms", "Malay (Bahasa Melayu)", null, null, "Natural, polite Bahasa Melayu as spoken in Singapore.", false));
         add(new Lang("ta", "Tamil", null, null, "Natural, polite spoken-standard Tamil as used in Singapore.", false));
         add(new Lang("th", "Thai", null,
-                "บทสนทนาเกี่ยวกับประกันในสิงคโปร์ ผู้พูดพูดภาษาไทย อาจมีคำภาษาอังกฤษปนอยู่ เขียนเป็นอักษรไทย",
+                "บทสนทนาเกี่ยวกับประกันในสิงคโปร์ ผู้พูดพูดภาษาไทย อาจมีคำภาษาอังกฤษปนอยู่ เขียนเป็นอักษรไทย ชื่อที่อาจพบ: สมชาย สมศักดิ์ สมพงษ์ สมพร ศุภชัย สุชาติ สุรศักดิ์ ประเสริฐ วิชัย กิตติพงษ์ ณัฐพงษ์ อนุรักษ์ ธนากร วรวุฒิ พรทิพย์ ศิริพร กัญญา มาลี ทรงชัย",
                 "Polite, natural Thai. Address the reader as คุณ. End sentences with the polite particles the sender would use: ค่ะ / คะ for a female "
                         + "sender, ครับ for a male sender (use ค่ะ / คะ when the sender's gender is not known). Never use blunt or overly formal "
                         + "bureaucratic Thai. Keep \"AIA\" in English.",
                 true));
         add(new Lang("fil", "Filipino (Tagalog)", null,
-                "Usapan tungkol sa insurance sa Singapore. Tagalog na may halong English (Taglish).",
-                "Natural, respectful Filipino as people really speak it, with the usual English insurance words (Taglish is fine for terms such as "
-                        + "\"insurance\", \"premium\", \"advisor\"). Show respect with \"po\" and \"opo\", and address the reader with the plural-respect "
-                        + "forms \"kayo\", \"ninyo\" and \"inyong\". Keep \"AIA\" in English.",
+                "Usapan tungkol sa insurance sa Singapore. Tagalog na may halong English (Taglish). Mga pangalang maaaring marinig: Dela Cruz, Marites, Villanueva, Bautista, Dizon, Aquino, Ocampo, Cristina.",
+                "Natural, respectful Filipino (Tagalog) as people really speak it. Every sentence is Tagalog; English is only for product names, insurance "
+                        + "terms such as \"premium\" or \"advisor\", and numbers. Never write a whole sentence, or a whole clause, in English. Show respect with "
+                        + "\"po\" and \"opo\", and address the reader with the plural-respect forms \"kayo\", \"ninyo\" and \"inyong\". Keep \"AIA\" in English.",
                 false));
         add(new Lang("vi", "Vietnamese", null,
-                "Cuộc trò chuyện về bảo hiểm ở Singapore. Người nói tiếng Việt, có thể xen lẫn một vài từ tiếng Anh. Viết có dấu đầy đủ.",
+                "Cuộc trò chuyện về bảo hiểm ở Singapore. Người nói tiếng Việt, có thể xen lẫn một vài từ tiếng Anh. Viết có dấu đầy đủ. Tên có thể gặp: Nguyễn, Trần, Phạm, Hoàng, Minh, Thảo, Linh, Phương, Hùng, Tuấn.",
                 "Natural, polite Vietnamese with full diacritics. Address the reader as \"anh/chị\" and refer to the sender as \"tôi\" or \"chúng tôi\" "
                         + "(not \"em\", whose meaning depends on age). Use \"ạ\" sparingly for politeness. The insurance advisor is the \"tư vấn viên\". "
                         + "Keep \"AIA\" in English.",
@@ -105,6 +105,42 @@ public final class Languages {
     public static String voiceAdapt(String lang, String text, boolean maleVoice) {
         if (text == null || !maleVoice || !"th".equals(normalize(lang))) return text;
         return text.replace("ค่ะ", "ครับ").replaceAll("คะ(?![\\u0E00-\\u0E7F])", "ครับ").replace("ดิฉัน", "ผม");
+    }
+
+    /**
+     * Names that speech recognition tends to turn into other, more familiar names ("Somchai" heard as "Sanjay"). Handed to it as context so the
+     * names of the customers in the languages that are on are spelled as spoken. Latin spellings: an English session writes them that way; a Thai
+     * session also gets the Thai script in its own prompt.
+     */
+    private static final Map<String, String> NAMES = Map.of(
+            "th", "Somchai, Somsak, Supachai, Prasert, Kittipong, Trongchai",
+            "fil", "Dela Cruz, Marites, Villanueva, Bautista",
+            "vi", "Nguyen, Tran, Pham, Hoang, Minh");
+
+    /** The names above for the languages that are on, as one comma-separated list ("" when none of them is). */
+    public static String nameHints() {
+        return enabled.stream().map(NAMES::get).filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.joining(", "));
+    }
+
+    /**
+     * Spark's prompts bound a line in English words ("up to 55 words"), which a language written without spaces cannot count. Spoken, Thai takes about
+     * 11 characters a second and Mandarin about 4.5, so a Thai reading of 55 words ran to half a minute. This gives such a language its limits in
+     * characters (about what 55 / 20 / 80 words come to, a little under); "" for the others.
+     */
+    public static String lengthNote(String code) {
+        return switch (normalize(code)) {
+            case "th" -> "LENGTH: write short lines. In Thai, count characters, not words: the first line after the dictation at most 150 characters, "
+                    + "a question line at most 80, the wrap-up at most 200. Say the key facts only; leave out anything the advisor already knows.\n";
+            case "zh" -> "LENGTH: write short lines. In Chinese, count characters, not words: the first line after the dictation at most 70 characters, "
+                    + "a question line at most 35, the wrap-up at most 100.\n";
+            case "fil", "vi" -> "LENGTH: write short lines: the first line after the dictation at most 45 words, a question line at most 18 words, the wrap-up at most 70 words.\n";
+            default -> "";
+        };
+    }
+
+    /** One line telling a model how to write in this language (English: none). For Spark's own lines, as for the follow-up and proposal writers. */
+    public static String styleNote(String code) {
+        return "en".equals(normalize(code)) ? "" : "STYLE: " + of(code).writingStyle() + "\n";
     }
 
     /** True if this letter's script is one a speaker of {@code lang} produces: Latin always, plus the language's own script. */

@@ -249,7 +249,7 @@ public class JunoDebriefService {
     private Llm call(Request req, List<JunoService.Turn> turns, boolean opening, boolean wrap, int asked, CustomerProfile profile, String extraNote,
                      DebriefReadinessService.Readiness readiness, Integer baseline) throws Exception {
         StringBuilder u = new StringBuilder();
-        u.append("LANGUAGE: ").append(JunoPhrases.of(req.lang()).language()).append("\n");
+        u.append("LANGUAGE: ").append(JunoPhrases.of(req.lang()).language()).append("\n").append(Languages.styleNote(req.lang())).append(Languages.lengthNote(req.lang()));
         u.append("FACTS ALREADY KNOWN: ").append(profile == null ? "none yet" : copilotService.knownFacts(profile)).append("\n");
         u.append("KNOWN FAMILY: ").append(JunoService.knownFamily(profile)).append("\n");
         if (readiness == null) u.append("FACT-FIND READINESS: not yet known\n");

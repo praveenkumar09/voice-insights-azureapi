@@ -31,6 +31,8 @@ public class TranscriptSequencer {
     private final ConcurrentSkipListMap<Long, Long> open = new ConcurrentSkipListMap<>();
     /** Settled and waiting for earlier numbers: sequence number -> what to do (null = skipped). */
     private final ConcurrentSkipListMap<Long, Runnable> done = new ConcurrentSkipListMap<>();
+    /** Numbers already settled (with text or skipped): a second answer for one of them is the same speech again and is ignored. */
+    private final java.util.Set<Long> settled = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Object lock = new Object();
     // One thread, so the callbacks stay in order; it is released when idle so a finished session leaves nothing behind.
     private final ExecutorService callbacks = newDeliveryExecutor();
@@ -66,6 +68,9 @@ public class TranscriptSequencer {
         settle(seq, null);
     }
 
+    /** Segments cut and not yet settled: speech that has been heard but whose words have not arrived. */
+    public int pendingCount() { return open.size(); }
+
     public String lastDelivered() { return lastDelivered; }
 
     public void setLastDelivered(String text) { lastDelivered = text; }
@@ -80,10 +85,11 @@ public class TranscriptSequencer {
         synchronized (lock) {
             if (seq >= 0) {
                 if (open.remove(seq) != null) {
+                    settled.add(seq);
                     done.put(seq, deliver == null ? NOOP : deliver);
-                } else if (deliver != null) {
+                } else if (deliver != null && settled.add(seq)) {
                     ready.add(deliver); // it was released as a straggler: hand it on late rather than lose it
-                }
+                } // else: a number that was already settled answered again (a segment carried to a new connection and also answered by the old one)
             }
             long now = System.currentTimeMillis();
             while (!done.isEmpty()) {

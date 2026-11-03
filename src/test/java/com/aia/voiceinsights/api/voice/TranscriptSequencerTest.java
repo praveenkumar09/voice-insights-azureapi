@@ -57,4 +57,28 @@ class TranscriptSequencerTest {
         assertEquals(List.of("A", "B"), out);
         s.close();
     }
+
+    @Test
+    void aSegmentAnsweredTwiceIsDeliveredOnce() throws Exception {
+        TranscriptSequencer sq = new TranscriptSequencer();
+        java.util.List<String> got = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        long a = sq.reserve();
+        sq.complete(a, () -> got.add("first answer"));
+        sq.complete(a, () -> got.add("same segment again"));
+        Thread.sleep(300);
+        assertEquals(java.util.List.of("first answer"), got);
+        sq.close();
+    }
+
+    @Test
+    void pendingCountIsTheSpeechHeardButNotYetTranscribed() {
+        TranscriptSequencer sq = new TranscriptSequencer();
+        assertEquals(0, sq.pendingCount());
+        long a = sq.reserve(), b = sq.reserve();
+        assertEquals(2, sq.pendingCount());
+        sq.complete(a, () -> { });
+        sq.skip(b);
+        assertEquals(0, sq.pendingCount());
+        sq.close();
+    }
 }

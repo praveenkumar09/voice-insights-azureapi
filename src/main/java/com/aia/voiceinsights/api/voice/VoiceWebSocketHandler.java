@@ -196,7 +196,9 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         boolean home = "sg".equals(com.aia.voiceinsights.api.service.BusinessUnits.current().id()); // the prompt and the name list are Singapore's
         String base = !home ? com.aia.voiceinsights.api.service.BusinessUnits.current().sttContext()
                 : transcriptionPromptBase == null ? "" : transcriptionPromptBase.trim().replaceAll("\\s+", " ");
-        String hints = !home || nameHints == null ? "" : nameHints.trim().replaceAll("\\s+", " ");
+        String local = com.aia.voiceinsights.api.service.Languages.nameHints(); // Thai, Filipino and Vietnamese names, for the languages that are on
+        String sg = !home || nameHints == null ? "" : nameHints.trim().replaceAll("\\s+", " ");
+        String hints = local.isEmpty() ? sg : sg.isEmpty() ? local : local + ", " + sg; // the shorter, more easily misheard list first: the end is what gets cut
         String head = dynamic == null || dynamic.isBlank() ? "" : dynamic.trim() + " ";
         String full = head + (hints.isEmpty() ? base : (base.isEmpty() ? "" : base + " ") + "Names and terms that may come up: " + hints);
         if (full.length() <= MAX_PROMPT_CHARS) return full;
@@ -480,6 +482,11 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             vs.commandVocab = sb.toString();
             applyCommandMode(vs);
             if (vs.transcriptionClient != null) vs.transcriptionClient.updatePrompt(promptFor(vs, ""));
+            return;
+        }
+        // "pending": how much heard speech has no transcript yet. A hand-over waits for it to reach 0 so that Spark's first summary has the whole dictation.
+        if ("pending".equals(node.path("type").asText(""))) {
+            sendJsonQuiet(wsSession, Map.of("type", "pending", "count", vs.sequencer.pendingCount()));
             return;
         }
         // "language": the customer (or advisor) chose another language — tell the speech model what to expect.

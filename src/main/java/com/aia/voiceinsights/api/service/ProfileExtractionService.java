@@ -36,7 +36,7 @@ public class ProfileExtractionService {
             a field null (or an empty array) if it hasn't come up yet. Never invent
             details that were not said.
             The conversation may be in English, Mandarin, Malay, Tamil, Thai, Filipino or Vietnamese, or a mix. Always write every field and label in
-            English (translate goals, occupation and so on). Personal names must be written in Latin letters: if a name is said in Chinese, Tamil or another script, write it romanised (for example pinyin), never in the original script. If the customer spells their name letter by letter
+            English (translate goals, occupation and so on). Personal names must be written in Latin letters: if a name is said in Chinese, Tamil or another script, write it romanised (for example pinyin), never in the original script. A name already written in Latin letters in the transcript keeps every accent and diacritic exactly as written there (write "Nguyễn Văn Hùng", never "Nguyen Van Hung"; "José", never "Jose"). If the customer spells their name letter by letter
             (for example "C-H-E-N"), the spelled letters are the correct spelling of that name — use them
             instead of any earlier guess.
             The profile describes ONE person: the main customer (the person being advised, e.g. the one named "Mr Lim").
@@ -44,7 +44,8 @@ public class ProfileExtractionService {
             age, occupation, incomeBand or existingPolicies. For example, "his wife is a housewife" or "she is 38" is about the
             wife, so the customer's occupation and age stay null unless stated about the customer himself or herself. List
             each person who depends on the customer financially in "dependantsList" (one entry per person, even when unnamed:
-            "son Ethan (8)", "child", "father (supported financially)"; two unnamed children are two entries). Children and
+            "son Ethan (8)", "child", "father (supported financially)"; two unnamed children are two entries; children told apart by sex are a "daughter" and a "son" in
+            any language: anak na babae or ลูกสาว or con gái or 女儿 is a daughter, anak na lalaki or ลูกชาย or con trai or 儿子 is a son). Children and
             parents the customer supports count. A spouse or partner does NOT count merely for being married: list them only when
             the speaker says they rely on the customer's income (does not work, is a homemaker, is supported by the customer).
             Otherwise leave the spouse out of the list and mention them in "notes". Do NOT count them
@@ -142,7 +143,8 @@ public class ProfileExtractionService {
 
     /** Income is kept in one style ("About $8,000/month", "$6,000-8,000/month") whatever way it was said: words, k, per year... */
     static String normaliseMoney(String said) {
-        return Calc.parseMoney(said).map(Calc::format).orElse(said);
+        String currency = Calc.currencyOf(said); // a figure said in baht stays in baht; "$" is only for dollars
+        return Calc.parseMoney(said).map(Calc::format).map(f -> currency == null ? f : f.replace("$", currency + " ")).orElse(said);
     }
 
     private void applyIfPresent(JsonNode root, String field, Consumer<String> setter) {

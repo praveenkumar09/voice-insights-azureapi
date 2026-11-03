@@ -112,6 +112,19 @@ public final class Calc {
         return "$" + String.format(Locale.ROOT, "%,d", r.longValue());
     }
 
+    private static final Pattern OTHER_CURRENCY = Pattern.compile(
+            "(?i)(THB|baht|บาท|฿)|(HKD|HK\\$)|(CNY|RMB|yuan|¥|元|人民币)|(MYR|ringgit|\\bRM\\s?\\d)|(IDR|rupiah|\\bRp\\b)|(PHP|₱|pesos?)|(VND|₫|đồng|\\bdong\\b)");
+    private static final String[] OTHER_CODES = {"THB", "HKD", "CNY", "MYR", "IDR", "PHP", "VND"};
+
+    /** The currency a figure was said in when it is not dollars ("90,000 baht" -> "THB"); null for dollars or when nothing says. */
+    public static String currencyOf(String text) {
+        if (text == null) return null;
+        Matcher m = OTHER_CURRENCY.matcher(text);
+        if (!m.find()) return null;
+        for (int i = 0; i < OTHER_CODES.length; i++) if (m.group(i + 1) != null) return OTHER_CODES[i];
+        return null;
+    }
+
     public static String format(Money m) {
         String per = m.period() == Period.MONTH ? "/month" : "/year";
         return m.isRange() ? dollars(m.low()) + "-" + dollars(m.high()).substring(1) + per : "About " + dollars(m.low()) + per;

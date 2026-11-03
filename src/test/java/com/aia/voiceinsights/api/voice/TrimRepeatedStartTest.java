@@ -50,4 +50,29 @@ class TrimRepeatedStartTest {
     void handlesChineseRepeats() {
         assertEquals("她很担心退休", AzureOpenAiRealtimeTranscriptionClient.trimRepeatedStart("她今年四十二岁，是一名老师", "是一名老师，她很担心退休").replaceFirst("^，", ""));
     }
+
+    @Test
+    void aThaiNumberWrittenInDigitsThenInWordsIsOneRepeat() {
+        // Seen live: one segment ended "อายุ 42 ปี" and the next began "สองปี เป็นวิศวกร" (the same audio, the number as words).
+        assertEquals("เป็นวิศวกร", AzureOpenAiRealtimeTranscriptionClient.trimRepeatedStart("พบลูกค้าชื่อ สมชาย อายุ 42 ปี", "สองปี เป็นวิศวกร"));
+        // ...and "ภรรยาชื่อสุดา มีลูกชายอายุ 8 ขวบ" followed by "ลูกแปดขวบ เขากังวล".
+        assertEquals("เขากังวล", AzureOpenAiRealtimeTranscriptionClient.trimRepeatedStart("แต่งงานแล้ว มีลูกชายอายุ 8 ขวบ", "ลูกแปดขวบ เขากังวล"));
+    }
+
+    @Test
+    void thaiNumbersAreReadTheWayThaiSaysThem() {
+        assertEquals("สี่สิบสอง", AzureOpenAiRealtimeTranscriptionClient.thaiNumbersAsWords("42"));
+        assertEquals("ยี่สิบเอ็ด", AzureOpenAiRealtimeTranscriptionClient.thaiNumbersAsWords("21"));
+        assertEquals("สิบเอ็ด", AzureOpenAiRealtimeTranscriptionClient.thaiNumbersAsWords("11"));
+        assertEquals("แปด", AzureOpenAiRealtimeTranscriptionClient.thaiNumbersAsWords("8"));
+        assertEquals("หนึ่งแสนสองหมื่น", AzureOpenAiRealtimeTranscriptionClient.thaiNumbersAsWords("120,000"));
+        assertEquals("สี่ล้าน", AzureOpenAiRealtimeTranscriptionClient.thaiNumbersAsWords("4000000"));
+        assertEquals("อายุ ห้าสิบ ปี", AzureOpenAiRealtimeTranscriptionClient.thaiNumbersAsWords("อายุ 50 ปี"));
+    }
+
+    @Test
+    void aShortThaiMatchIsOnlyTrustedWhenItSitsOnANumber() {
+        String cur = "ปีใหม่ ครอบครัวมีความสุข";
+        assertEquals(cur, AzureOpenAiRealtimeTranscriptionClient.trimRepeatedStart("เขาทำงานมาหลายปี", cur));
+    }
 }
