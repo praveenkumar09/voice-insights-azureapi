@@ -116,6 +116,18 @@ public class CustomerProfileStore {
         return readable(rows);
     }
 
+    /**
+     * An advisor's own debriefs, newest first. With {@code includeUnowned}, debriefs saved before advisors were recorded on them (no owner) are
+     * included too: they would otherwise be lost to everyone.
+     */
+    public List<CustomerProfile> findForAdvisor(String advisorId, boolean includeUnowned, int limit) {
+        String where = includeUnowned ? "(agent_user_id = ? OR agent_user_id IS NULL)" : "agent_user_id = ?";
+        List<String> rows = jdbc.query(
+                "SELECT profile_json::text FROM %s.customer_profiles WHERE %s ORDER BY created_at DESC LIMIT ?".formatted(schema, where),
+                (rs, rowNum) -> rs.getString(1), advisorId, limit);
+        return readable(rows);
+    }
+
     public long count() {
         Long total = jdbc.queryForObject("SELECT COUNT(*) FROM %s.customer_profiles".formatted(schema), Long.class);
         return total == null ? 0 : total;

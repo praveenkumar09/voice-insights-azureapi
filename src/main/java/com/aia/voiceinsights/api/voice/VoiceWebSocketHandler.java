@@ -89,9 +89,13 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
 
     private final com.aia.voiceinsights.api.service.TranscriptRepairService repairService;
 
+    private final com.aia.voiceinsights.api.service.AuthStore authStore;
+
     public VoiceWebSocketHandler(CustomerProfileStore profileStore, ProfileExtractionService extractionService,
                                  LiveCopilotService copilotService,
-                                 com.aia.voiceinsights.api.service.TranscriptRepairService repairService) {
+                                 com.aia.voiceinsights.api.service.TranscriptRepairService repairService,
+                                 com.aia.voiceinsights.api.service.AuthStore authStore) {
+        this.authStore = authStore;
         this.repairService = repairService;
         this.profileStore = profileStore;
         this.extractionService = extractionService;
@@ -413,6 +417,15 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
         JsonNode node = mapper.readTree(message.getPayload());
         // "commit": the advisor paused dictating. Server-side VAD only finalizes at a pause in the audio, and a
         // paused browser sends none — so commit whatever has been heard, or the last sentence stays unfinished.
+        // "auth": the browser's first message. It says whose debrief this is, so the debrief is remembered under that advisor from the start
+        // (the socket itself carries no identity, and the token must not travel in the URL).
+        if ("auth".equals(node.path("type").asText(""))) {
+            authStore.resolveUserId(node.path("token").asText("")).ifPresent(userId -> {
+                vs.profile.setAgentUserId(userId);
+                if (!"ASK".equals(vs.profile.getCaptureMode())) profileStore.save(vs.profile);
+            });
+            return;
+        }
         if ("turn_taken".equals(node.path("type").asText("")) && vs.transcriptionClient != null) {
             vs.transcriptionClient.discardHeld();
             return;
