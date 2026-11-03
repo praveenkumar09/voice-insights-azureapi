@@ -169,7 +169,7 @@ public class JunoDebriefService {
     private final Map<String, Integer> baselineReadiness = new ConcurrentHashMap<>();
     private final ObjectMapper mapper = new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    public JunoDebriefService(@Qualifier("azureOpenAiChatModel") ChatModel chatModel, CustomerProfileStore profileStore,
+    public JunoDebriefService(@Qualifier("localizingChatModel") ChatModel chatModel, CustomerProfileStore profileStore,
                               LiveCopilotService copilotService, ProductVectorSearchService productSearch,
                               DebriefReadinessService readinessService) {
         this.readinessService = readinessService;

@@ -47,7 +47,7 @@ public class JunoCommandService {
 
             - The words come from speech recognition in an office and can be slightly wrong ("debrief" heard as "deprive", "Spark" as "you
               know"). Pick the action closest in meaning and sound. "Debrief with Spark" is a mode name, so a second "Spark" belongs to it.
-            - Only listed ids. An "enum" parameter must be exactly one of its values ("follow up" is "follow_up"; "chinese" is "zh"). A
+            - Only listed ids. An "enum" parameter must be exactly one of its values ("follow up" is "follow_up"; "chinese" is "zh"; "thai" is "th"; "filipino" or "tagalog" is "fil"; "vietnamese" is "vi"). A
               "string" parameter is the advisor's own words.
             - "say" stays EMPTY unless the action is "none" (or a required parameter is missing): then one short reply naming two or three
               things they could say here, from AVAILABLE ACTIONS ("what can you do" gets that too).

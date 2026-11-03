@@ -39,7 +39,7 @@ public class HedgedChat {
         return t;
     });
 
-    public HedgedChat(@Qualifier("azureOpenAiChatModel") ChatModel chatModel) {
+    public HedgedChat(@Qualifier("localizingChatModel") ChatModel chatModel) {
         this.chatModel = chatModel;
     }
 

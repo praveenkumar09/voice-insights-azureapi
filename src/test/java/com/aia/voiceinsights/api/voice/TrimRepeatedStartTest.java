@@ -34,6 +34,19 @@ class TrimRepeatedStartTest {
     }
 
     @Test
+    void handlesThaiRepeatsEvenThoughThaiHasNoSpaces() {
+        // seen live: "...ชื่อสมชาย" then a segment starting "ชาย อายุ..." showed the name twice
+        assertEquals("อายุสี่สิบสองปี ทำงานเป็นวิศวกร",
+                AzureOpenAiRealtimeTranscriptionClient.trimRepeatedStart("วันนี้ผมได้พบลูกค้าชื่อสมชาย", "ลูกค้าชื่อสมชาย อายุสี่สิบสองปี ทำงานเป็นวิศวกร"));
+    }
+
+    @Test
+    void doesNotCutThaiTextOnAShortCoincidence() {
+        String cur = "ครับ ผมคิดว่าเรื่องนี้สำคัญ";
+        assertEquals(cur, AzureOpenAiRealtimeTranscriptionClient.trimRepeatedStart("ขอบคุณมากครับ", cur));
+    }
+
+    @Test
     void handlesChineseRepeats() {
         assertEquals("她很担心退休", AzureOpenAiRealtimeTranscriptionClient.trimRepeatedStart("她今年四十二岁，是一名老师", "是一名老师，她很担心退休").replaceFirst("^，", ""));
     }

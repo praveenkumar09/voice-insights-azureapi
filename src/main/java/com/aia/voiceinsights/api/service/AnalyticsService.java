@@ -29,7 +29,7 @@ public class AnalyticsService {
     private static final int MAX_PROFILES = 5000;
     private static final int HOT = 70;
     private static final int WARM = 35; // only used when a snapshot carries no label — matches LiveCopilotService.levelFor
-    private static final ZoneId ZONE = ZoneId.of("Asia/Singapore");
+    private static ZoneId zone() { return BusinessUnits.zone(); }
 
     private final CustomerProfileStore profileStore;
     private final RecommendationStore recommendationStore;
@@ -117,9 +117,9 @@ public class AnalyticsService {
 
         // Daily trend, zero-filled so the chart has a continuous axis.
         Map<LocalDate, List<CustomerProfile>> byDay = analysed.stream()
-                .collect(Collectors.groupingBy(p -> p.getCreatedAt().atZone(ZONE).toLocalDate()));
+                .collect(Collectors.groupingBy(p -> p.getCreatedAt().atZone(zone()).toLocalDate()));
         List<DayPoint> trend = new ArrayList<>();
-        LocalDate today = LocalDate.now(ZONE);
+        LocalDate today = LocalDate.now(zone());
         int span = Math.min(days, 30); // chart at most 30 daily points; longer ranges show their latest 30 days
         for (int i = span - 1; i >= 0; i--) {
             LocalDate d = today.minusDays(i);
@@ -203,7 +203,7 @@ public class AnalyticsService {
         // ── When conversations happen: weekday (Mon=0) x hour, Singapore time ────────────────────
         int[] grid = new int[7 * 24];
         for (CustomerProfile p : analysed) {
-            var t = p.getCreatedAt().atZone(ZONE);
+            var t = p.getCreatedAt().atZone(zone());
             grid[(t.getDayOfWeek().getValue() - 1) * 24 + t.getHour()]++;
         }
         List<Integer> activity = Arrays.stream(grid).boxed().toList();

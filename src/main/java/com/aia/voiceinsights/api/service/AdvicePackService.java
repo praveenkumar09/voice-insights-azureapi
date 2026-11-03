@@ -39,7 +39,7 @@ import java.util.concurrent.Executors;
 public class AdvicePackService {
 
     private static final Logger log = LoggerFactory.getLogger(AdvicePackService.class);
-    private static final ZoneId SG = ZoneId.of("Asia/Singapore");
+    private static ZoneId zone() { return BusinessUnits.zone(); }
 
     public static final Set<String> SECTIONS = Set.of("factFind", "recordOfAdvice", "followUp", "crm", "nextMeeting");
     public static final Set<String> TONES = Set.of("warm", "professional", "brief");
@@ -576,7 +576,7 @@ public class AdvicePackService {
                 + "\nSuggested products: " + String.join(", ", in.shortlist().shortlistedProducts())
                 + "\nTalking points: " + list(in.summary().keyTalkingPoints());
         CrmDraft d = agents.callJson(CRM_PROMPT, user, CrmDraft.class);
-        LocalDate today = LocalDate.now(SG);
+        LocalDate today = LocalDate.now(zone());
         List<Task> tasks = new ArrayList<>();
         for (DraftTask t : safe(d.tasks())) {
             if (t == null || t.title() == null || t.title().isBlank()) continue;

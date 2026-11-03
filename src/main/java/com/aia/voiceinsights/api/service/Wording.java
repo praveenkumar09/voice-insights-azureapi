@@ -43,7 +43,7 @@ public final class Wording {
             number for how well a product suits the customer; if relevance must be described, say it is "highly relevant",
             "relevant" or "worth discussing". Product names and quotations from documents or from the customer are copied
             exactly and are not reworded. In Chinese write 建议, not 推荐; in Malay write cadangan, not syor; in Tamil write
-            யோசனை (or முன்மொழி for the verb), not பரிந்துரை.
+            யோசனை (or முன்மொழி for the verb), not பரிந்துரை; in Thai write ข้อเสนอแนะ / เสนอแนะ, not คำแนะนำ; in Filipino write mungkahi / imungkahi, not rekomendasyon / irekomenda; in Vietnamese write gợi ý / đề xuất, not khuyến nghị (the advisor, "tư vấn viên", gives advice; the app only suggests).
             """;
 
     public static String withRule(String systemPrompt) {
@@ -59,7 +59,10 @@ public final class Wording {
             "en", new String[] {"Highly relevant", "Relevant", "Worth discussing"},
             "zh", new String[] {"高度相关", "相关", "值得讨论"},
             "ms", new String[] {"Sangat relevan", "Relevan", "Wajar dibincangkan"},
-            "ta", new String[] {"மிகவும் தொடர்புடையது", "தொடர்புடையது", "விவாதிக்கத் தகுந்தது"});
+            "ta", new String[] {"மிகவும் தொடர்புடையது", "தொடர்புடையது", "விவாதிக்கத் தகுந்தது"},
+            "th", new String[] {"เกี่ยวข้องมาก", "เกี่ยวข้อง", "น่าหารือ"},
+            "fil", new String[] {"Lubhang kaugnay", "Kaugnay", "Karapat-dapat pag-usapan"},
+            "vi", new String[] {"Rất liên quan", "Liên quan", "Đáng thảo luận"});
 
     public static String relevance(int score, String lang) {
         String[] l = LABELS.getOrDefault(lang == null ? "en" : lang, LABELS.get("en"));
@@ -92,6 +95,8 @@ public final class Wording {
             {"பரிந்துரைக்க", "முன்மொழிய"}, {"பரிந்துரை", "யோசனை"}};
 
     private static final Pattern WORD = Pattern.compile("(?i)\\brecommend(ations?|ed|ing|s)?\\b");
+    private static final Pattern FILIPINO = Pattern.compile("(?i)\\b(rekomendasyones|rekomendasyon|inirerekomenda|nirerekomenda|irekomenda|nirekomenda|inirekomenda|magrekomenda)\\b");
+    private static final Pattern VIETNAMESE = Pattern.compile("(?i)khuyến nghị");
     private static final Pattern MALAY = Pattern.compile("(?i)\\b(mengesyorkan|disyorkan|pengesyoran|syor)\\b");
 
     public static String suggest(String text) {
@@ -114,6 +119,15 @@ public final class Wording {
         })));
         t = t.replace("推荐", "建议").replace("推薦", "建議");
         for (String[] r : TAMIL) t = t.replace(r[0], r[1]);
+        t = t.replace("คำแนะนำ", "ข้อเสนอแนะ");
+        t = FILIPINO.matcher(t).replaceAll(m -> Matcher.quoteReplacement(caseLike(m.group(), switch (m.group().toLowerCase(Locale.ROOT)) {
+            case "rekomendasyon", "rekomendasyones" -> "mungkahi";
+            case "inirerekomenda", "nirerekomenda" -> "iminumungkahi";
+            case "irekomenda" -> "imungkahi";
+            case "nirekomenda", "inirekomenda" -> "iminungkahi";
+            default -> "magmungkahi";
+        })));
+        t = VIETNAMESE.matcher(t).replaceAll(m -> Matcher.quoteReplacement(caseLike(m.group(), m.group().toLowerCase(Locale.ROOT).startsWith("khuyến nghị") ? "gợi ý" : "gợi ý")));
         t = MALAY.matcher(t).replaceAll(m -> Matcher.quoteReplacement(caseLike(m.group(), switch (m.group(1).toLowerCase(Locale.ROOT)) {
             case "mengesyorkan" -> "mencadangkan";
             case "disyorkan" -> "dicadangkan";

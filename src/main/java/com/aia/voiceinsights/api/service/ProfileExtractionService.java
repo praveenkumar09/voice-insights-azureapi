@@ -35,7 +35,7 @@ public class ProfileExtractionService {
             ONLY facts actually stated or clearly implied in the transcript; leave
             a field null (or an empty array) if it hasn't come up yet. Never invent
             details that were not said.
-            The conversation may be in English, Mandarin, Malay or Tamil, or a mix. Always write every field and label in
+            The conversation may be in English, Mandarin, Malay, Tamil, Thai, Filipino or Vietnamese, or a mix. Always write every field and label in
             English (translate goals, occupation and so on). Personal names must be written in Latin letters: if a name is said in Chinese, Tamil or another script, write it romanised (for example pinyin), never in the original script. If the customer spells their name letter by letter
             (for example "C-H-E-N"), the spelled letters are the correct spelling of that name — use them
             instead of any earlier guess.
@@ -93,7 +93,7 @@ public class ProfileExtractionService {
     private final ChatModel chatModel;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public ProfileExtractionService(@Qualifier("azureOpenAiChatModel") ChatModel chatModel) {
+    public ProfileExtractionService(@Qualifier("localizingChatModel") ChatModel chatModel) {
         this.chatModel = chatModel;
     }
 

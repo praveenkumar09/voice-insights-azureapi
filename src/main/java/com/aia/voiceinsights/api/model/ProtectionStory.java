@@ -29,8 +29,8 @@ public record ProtectionStory(
     /** A line the customer actually said — verified to appear in the transcript. */
     public record Quote(String text, String theme) implements Serializable {}
 
-    /** {@code benefitAmount} is only ever set when that figure appears in the product evidence. */
-    public record ProductBenefit(String name, Integer benefitAmount, String benefitNote) implements Serializable {}
+    /** {@code benefitAmount} is only ever set when that figure appears in the product evidence. It is in the selected business unit's currency (the field the model fills is still called benefitAmountSgd). {@code currency} says which: null on records made before business units existed, which means SGD. */
+    public record ProductBenefit(String name, Long benefitAmount, String benefitNote, String currency) implements Serializable {}
 
     /** One thing the customer wants for themselves or their family, and how the plan helps. */
     public record Goal(String label, String forRelation, String support, List<String> products, String said) implements Serializable {}

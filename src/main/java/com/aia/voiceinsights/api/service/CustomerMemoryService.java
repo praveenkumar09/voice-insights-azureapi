@@ -57,7 +57,7 @@ public class CustomerMemoryService {
 
     private record Script(String script) {}
 
-    private static final ZoneId ZONE = ZoneId.of("Asia/Singapore");
+    private static ZoneId zone() { return BusinessUnits.zone(); }
     private static final int MAX_CANDIDATES = 4;
     /** A name must fit this well to count at all, and anything within this of the best fit is "also a match". */
     static final double MIN_SCORE = 0.7;
@@ -305,7 +305,9 @@ public class CustomerMemoryService {
 
     static List<String> tokens(String s) {
         if (s == null) return List.of();
-        String plain = Normalizer.normalize(s, Normalizer.Form.NFD).replaceAll("\\p{M}+", "").toLowerCase(Locale.ROOT);
+        // Accents are dropped from Latin names only (a spoken "Nguyen" matches "Nguyễn"); in Thai and other scripts the marks are part of the letters.
+        boolean latinOnly = s.codePoints().noneMatch(c -> Character.isLetter(c) && Character.UnicodeScript.of(c) != Character.UnicodeScript.LATIN);
+        String plain = (latinOnly ? Normalizer.normalize(s, Normalizer.Form.NFD).replaceAll("\\p{M}+", "") : s).toLowerCase(Locale.ROOT);
         return java.util.Arrays.stream(plain.split("[^\\p{L}]+")).filter(t -> !t.isBlank()).collect(Collectors.toList());
     }
 
@@ -393,8 +395,8 @@ public class CustomerMemoryService {
 
     /** "today", "yesterday", "on Tuesday" (within the last week), else "on 28 October" (with the year if it is not this one). */
     static String spokenWhen(Instant at, Instant now) {
-        LocalDate d = at.atZone(ZONE).toLocalDate();
-        LocalDate today = now.atZone(ZONE).toLocalDate();
+        LocalDate d = at.atZone(zone()).toLocalDate();
+        LocalDate today = now.atZone(zone()).toLocalDate();
         long days = ChronoUnit.DAYS.between(d, today);
         if (days <= 0) return "today";
         if (days == 1) return "yesterday";

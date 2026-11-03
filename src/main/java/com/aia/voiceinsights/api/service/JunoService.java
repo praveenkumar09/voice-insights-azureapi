@@ -171,7 +171,7 @@ public class JunoService {
     private final LiveCopilotService copilotService;
     private final ObjectMapper mapper = new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    public JunoService(@Qualifier("azureOpenAiChatModel") ChatModel chatModel, ProductVectorSearchService productSearch, CustomerProfileStore profileStore,
+    public JunoService(@Qualifier("localizingChatModel") ChatModel chatModel, ProductVectorSearchService productSearch, CustomerProfileStore profileStore,
                          LiveCopilotService copilotService) {
         this.chatModel = chatModel;
         this.productSearch = productSearch;
@@ -257,7 +257,7 @@ public class JunoService {
     private Llm call(Request req, List<Turn> turns, boolean consentPhase, boolean mustWrapUp, boolean qaMode, boolean sensitive) throws Exception {
         StringBuilder u = new StringBuilder();
         u.append("LANGUAGE: ").append(JunoPhrases.of(req.lang()).language()).append("\n");
-        if ("zh".equals(JunoPhrases.normalize(req.lang()))) u.append("In Chinese always use the polite form 您 (never 你) when speaking to the customer.\n");
+        if (!"en".equals(JunoPhrases.normalize(req.lang()))) u.append("STYLE: ").append(Languages.of(req.lang()).writingStyle()).append(" Speak to the customer, not about them.\n");
         CustomerProfile profile = req.profileId() == null ? null : profileStore.findById(req.profileId()).orElse(null);
         u.append("FACTS ALREADY KNOWN: ").append(profile == null ? "none yet" : copilotService.knownFacts(profile)).append("\n");
         u.append("KNOWN FAMILY: ").append(knownFamily(profile)).append("\n");

@@ -147,7 +147,10 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             "^(?:\\W*\\b(?:hi|hello|hey|hola|bye|goodbye|thanks?|thank|you|the|a|an)\\b)+\\W*$", java.util.regex.Pattern.CASE_INSENSITIVE);
 
     /** A letter in a script nobody dictates in here: not Latin, Chinese (Han) or Tamil. */
-    private static final java.util.regex.Pattern FOREIGN_SCRIPT = java.util.regex.Pattern.compile("[\\p{L}&&[^\\p{IsLatin}\\p{IsHan}\\p{IsTamil}]]");
+    /** A letter in a script nobody dictates in this session: not Latin, Chinese (Han), Tamil, or the session language's own script (Thai for a Thai session). */
+    private static boolean hasForeignScript(String text, String lang) {
+        return text.codePoints().anyMatch(c -> Character.isLetter(c) && !com.aia.voiceinsights.api.service.Languages.scriptAllowed(lang, c));
+    }
 
     /** Any letter that is neither Latin nor Chinese (Han): Tamil, Arabic, Cyrillic... Advisors mix English with Mandarin, so Han is allowed. */
     private static final java.util.regex.Pattern OTHER_SCRIPT = java.util.regex.Pattern.compile("[\\p{L}&&[^\\p{IsLatin}\\p{IsHan}]]");
@@ -190,8 +193,10 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
 
     /** {@code dynamic}: what is happening right now (e.g. a name is about to be said) — it goes first, as it matters most. */
     private String transcriptionPrompt(String dynamic) {
-        String base = transcriptionPromptBase == null ? "" : transcriptionPromptBase.trim().replaceAll("\\s+", " ");
-        String hints = nameHints == null ? "" : nameHints.trim().replaceAll("\\s+", " ");
+        boolean home = "sg".equals(com.aia.voiceinsights.api.service.BusinessUnits.current().id()); // the prompt and the name list are Singapore's
+        String base = !home ? com.aia.voiceinsights.api.service.BusinessUnits.current().sttContext()
+                : transcriptionPromptBase == null ? "" : transcriptionPromptBase.trim().replaceAll("\\s+", " ");
+        String hints = !home || nameHints == null ? "" : nameHints.trim().replaceAll("\\s+", " ");
         String head = dynamic == null || dynamic.isBlank() ? "" : dynamic.trim() + " ";
         String full = head + (hints.isEmpty() ? base : (base.isEmpty() ? "" : base + " ") + "Names and terms that may come up: " + hints);
         if (full.length() <= MAX_PROMPT_CHARS) return full;
@@ -210,7 +215,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
      * checked by the advisor on the review screen instead.
      */
     /**
-     * What a Singapore advisor really sounds like: English with a Mandarin, Malay or Tamil word dropped in. Given nothing, the speech
+     * What a Singapore advisor really sounds like: English with a Mandarin, Malay or Tamil word dropped in. (Thai, Filipino and Vietnamese sessions use their own prompt.) Given nothing, the speech
      * model writes those words as English look-alikes ("女儿" as "newer", "退休" as "Tuchel") or drops them; told to keep each word
      * in its own language it gets them right, and a few worked examples (not a vocabulary list, which seeded invented sentences from
      * noise: measured) keep short segments right too. No names or topics here (see above): they would let noise turn into notes. The
@@ -219,6 +224,16 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
     static final String MIXED_LANGUAGE_HINT = "Singapore English with a few Mandarin, Malay or Tamil words mixed in. "
             + "Write each word in the language it was spoken in, and never translate. "
             + "For example: 女儿 (daughter), 退休 (retirement), 保险 (insurance), 不过 (but), isteri (wife), anak (child), amma (mother), pillai (child).";
+
+    /** The English-session hint for the selected business unit: Singapore's is above; another unit's names its own country and the languages it offers. */
+    public static String mixedLanguageHint() {
+        var bu = com.aia.voiceinsights.api.service.BusinessUnits.current();
+        if ("sg".equals(bu.id())) return MIXED_LANGUAGE_HINT;
+        String others = com.aia.voiceinsights.api.service.Languages.enabled().stream().filter(l -> !"en".equals(l.code()))
+                .map(l -> l.name().replaceAll(" \\(.*\\)", "").replace("Mandarin Chinese", "Mandarin")).collect(java.util.stream.Collectors.joining(", "));
+        return "English as spoken in " + bu.country() + (others.isEmpty() ? "" : " with a few " + others + " words mixed in") + ". "
+                + "Write each word in the language it was spoken in, and never translate.";
+    }
 
     private String promptFor(VoiceSession vs, String dynamic) {
         // Ask mode is also where Spark mode listens: the assistant's name is given so "Hey Spark" is spelled, not heard as "you know".
@@ -234,7 +249,9 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             return transcriptionPrompt((name + (dynamic == null ? "" : dynamic)).trim());
         }
         if (!"JUNO_DEBRIEF".equals(vs.profile.getCaptureMode())) return transcriptionPrompt(dynamic);
-        if ("en".equals(vs.lang)) return MIXED_LANGUAGE_HINT;
+        if ("en".equals(vs.lang)) return mixedLanguageHint();
+        String own = com.aia.voiceinsights.api.service.Languages.of(vs.lang).sttPrompt();
+        if (own != null) return own;
         return "The advisor is speaking " + com.aia.voiceinsights.api.service.JunoPhrases.of(vs.lang).language()
                 + " (they may mix in English words). Transcribe in the language spoken.";
     }
@@ -307,13 +324,13 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                         String text = redact(ChineseScript.toSimplified(raw)); // ID and card numbers are never stored or shown
                         // Words the speech model got wrong for want of context (Mandarin/Malay/Tamil words, 她/他) are fixed here; this
                         // runs on the in-order delivery thread, so it cannot reorder anything, and it is time-boxed.
-                        if (!"ASK".equals(vs.profile.getCaptureMode()) && !vs.profile.getCaptureMode().equals("JUNO")) {
+                        if (!"ASK".equals(vs.profile.getCaptureMode()) && !vs.profile.getCaptureMode().equals("JUNO") && com.aia.voiceinsights.api.service.Languages.repairable(vs.lang)) {
                             text = redact(ChineseScript.toSimplified(repairService.repair(vs.transcript.toString(), text)));
                         }
                         // A debrief with Spark in English: a line in another script (Tamil, Chinese...) is the speech model
                         // inventing words from background noise, not the advisor. It is dropped before anything reads it.
-                        // In every mode: a script nobody here speaks (Arabic, Cyrillic, Thai, Korean...) is invented from noise.
-                        if (FOREIGN_SCRIPT.matcher(text).find()) {
+                        // In every mode: a script nobody here speaks (Arabic, Cyrillic, Korean... and Thai outside a Thai session) is invented from noise.
+                        if (hasForeignScript(text, vs.lang)) {
                             System.out.println("[voice-stt] dropped a line in a script nobody here speaks: " + text);
                             clearPartial(wsSession, vs);
                             return;
@@ -622,7 +639,7 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
                     .append(" (they may mix in English words). Transcribe in the language spoken. ");
         }
         if (NAME_TALK.matcher(junoLine).find()) {
-            sb.append("The speaker is about to say personal names (their own or family members', Indian, Malay or Chinese in Singapore).");
+            sb.append("The speaker is about to say personal names (their own or family members', Indian, Malay or Chinese in Singapore).".replace("Indian, Malay or Chinese in Singapore", com.aia.voiceinsights.api.service.BusinessUnits.localize("Indian, Malay or Chinese in Singapore")));
         }
         java.util.LinkedHashSet<String> known = new java.util.LinkedHashSet<>();
         if (vs.profile.getCustomerName() != null) known.add(vs.profile.getCustomerName());

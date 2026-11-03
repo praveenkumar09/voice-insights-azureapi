@@ -105,7 +105,7 @@ public class JunoAskService {
               analysis, and that adding the new fact to the profile and running the analysis again is how to be sure.
             - If asked something unrelated to this customer or these suggestions, say in one friendly sentence that you are only here for
               this customer's suggestions, and offer to look at one of them.
-            - Reply in the language the advisor used (English, Mandarin, Malay or Tamil). Product names stay as they are.
+            - Reply in the language the advisor used (English, Mandarin, Malay, Tamil, Thai, Filipino or Vietnamese). Product names stay as they are.
             - The advisor's words come from speech recognition and may be slightly wrong ("secure guard" means AIA Secure Guard Term);
               read them charitably.
 
@@ -136,7 +136,7 @@ public class JunoAskService {
     });
 
     public JunoAskService(RecommendationStore runStore, CustomerProfileStore profileStore, ProductVectorSearchService productSearch,
-                          JunoAskStore store, ScenarioService scenarios, @Qualifier("azureOpenAiChatModel") ChatModel chatModel) {
+                          JunoAskStore store, ScenarioService scenarios, @Qualifier("localizingChatModel") ChatModel chatModel) {
         this.scenarios = scenarios;
         this.runStore = runStore;
         this.profileStore = profileStore;

@@ -82,7 +82,7 @@ public class RecommendationAgentService {
      *  agents within one run (and several concurrent runs) call the model at once. */
     private final ExecutorService llmExecutor = Executors.newFixedThreadPool(24);
 
-    public RecommendationAgentService(@Qualifier("azureOpenAiChatModel") ChatModel chatModel, ProductVectorSearchService productSearch) {
+    public RecommendationAgentService(@Qualifier("localizingChatModel") ChatModel chatModel, ProductVectorSearchService productSearch) {
         this.chatModel = chatModel;
         this.productSearch = productSearch;
     }
@@ -467,11 +467,11 @@ public class RecommendationAgentService {
                                                   ProductShortlistResult shortlist, RagValidationResult validation,
                                                   RecommendationSummaryResult summary, ComplianceCheckResult compliance) {
         String generatedAt = DateTimeFormatter.ofPattern("d MMM yyyy, h:mm a")
-                .withZone(ZoneId.of("Asia/Singapore"))
+                .withZone(BusinessUnits.zone())
                 .format(java.time.Instant.now());
 
         StringBuilder md = new StringBuilder();
-        md.append("# AIA Singapore — Advisory Sales Report\n\n");
+        md.append("# " + BusinessUnits.name() + " — Advisory Sales Report\n\n");
         md.append("*Generated ").append(generatedAt).append(" SGT*\n\n");
 
         md.append("## Customer\n");
@@ -574,7 +574,10 @@ public class RecommendationAgentService {
             "en", "English",
             "zh", "Simplified Chinese (简体中文)",
             "ms", "Bahasa Melayu",
-            "ta", "Tamil (தமிழ்)");
+            "ta", "Tamil (தமிழ்)",
+            "th", "Thai (ภาษาไทย)",
+            "fil", "Filipino (Tagalog)",
+            "vi", "Vietnamese (Tiếng Việt)");
 
     private static final String PROPOSAL_SYSTEM_PROMPT = """
             You are the Sales Report agent for AIA Singapore. Alongside the internal advisory report,
@@ -657,7 +660,7 @@ public class RecommendationAgentService {
                 + "\nAdvisor talking points: " + listOrNone(summary.keyTalkingPoints())
                 + "\n\nShortlisted products (in suggestion order):" + products;
 
-        ProposalResult.Draft draft = call(PROPOSAL_SYSTEM_PROMPT.formatted(language), userMessage, ProposalResult.Draft.class);
+        ProposalResult.Draft draft = call(PROPOSAL_SYSTEM_PROMPT.formatted(language) + "\n\nLANGUAGE STYLE: " + Languages.of(code).writingStyle(), userMessage, ProposalResult.Draft.class);
 
         List<ProposalResult.ProposalProduct> out = new ArrayList<>();
         List<ProposalResult.DraftProduct> drafted = draft.products() == null ? List.of() : draft.products();
@@ -835,12 +838,12 @@ public class RecommendationAgentService {
             ProtectionStory.DraftBenefit d = draft.products() == null ? null : draft.products().stream()
                     .filter(p -> p.name() != null && p.name().equalsIgnoreCase(name)).findFirst().orElse(null);
             String evidence = validation.citations().stream().filter(c -> c.productName().equalsIgnoreCase(name))
-                    .map(EvidenceCitation::excerpt).reduce("", (a, b) -> a + " " + b).replace(",", "");
-            Integer amount = null;
+                    .map(c -> BusinessUnits.convertAmounts(c.excerpt())).reduce("", (a, b) -> a + " " + b).replace(",", ""); // in the unit's currency, as the model saw it
+            Long amount = null;
             if (d != null && d.benefitAmountSgd() != null && evidence.contains(String.valueOf(d.benefitAmountSgd().longValue()))) {
-                amount = d.benefitAmountSgd().intValue();
+                amount = d.benefitAmountSgd().longValue();
             }
-            benefits.add(new ProtectionStory.ProductBenefit(name, amount, d == null ? null : d.benefitNote()));
+            benefits.add(new ProtectionStory.ProductBenefit(name, amount, d == null ? null : d.benefitNote(), BusinessUnits.current().currency()));
         }
 
         ProtectionStory.Review review = reviewStory(draft.headline(), draft.opening(), goals, draft.closing(), productsBlock);

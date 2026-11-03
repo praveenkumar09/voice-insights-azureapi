@@ -54,7 +54,7 @@ public class LiveCopilotService {
             You are a real-time copilot for an AIA insurance advisor, reading a live,
             speaker-unlabelled transcript of the advisor talking with a customer.
             Infer who is speaking from context. Be concise and never invent facts.
-            The conversation may be in English, Mandarin, Malay or Tamil, or a mix. Write every label, signal and question in
+            The conversation may be in English, Mandarin, Malay, Tamil, Thai, Filipino or Vietnamese, or a mix. Write every label, signal and question in
             English, but copy every "said" quote EXACTLY as spoken, in its original language. Keep personal names as spoken.
 
             Respond with ONLY a JSON object, no markdown fences:
@@ -213,7 +213,7 @@ public class LiveCopilotService {
     private final ObjectMapper mapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    public LiveCopilotService(@Qualifier("azureOpenAiChatModel") ChatModel chatModel, ProductVectorSearchService productSearch) {
+    public LiveCopilotService(@Qualifier("localizingChatModel") ChatModel chatModel, ProductVectorSearchService productSearch) {
         this.chatModel = chatModel;
         this.productSearch = productSearch;
     }

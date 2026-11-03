@@ -731,7 +731,7 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     /** The last line kept, for removing the words a following overlapping segment repeats. */
     private volatile String lastFinal;
 
-    private static final java.util.regex.Pattern UNIT = java.util.regex.Pattern.compile("\\p{IsHan}|[\\p{L}\\p{N}&&[^\\p{IsHan}]]+");
+    private static final java.util.regex.Pattern UNIT = java.util.regex.Pattern.compile("\\p{IsHan}|\\p{IsThai}|[\\p{L}\\p{N}&&[^\\p{IsHan}\\p{IsThai}]]+"); // Chinese and Thai: one character is one unit (no spaces between words)
 
     /**
      * A segment that starts inside the previous one (after a cut in the middle of speech) begins by repeating its last words.
@@ -753,8 +753,11 @@ public class AzureOpenAiRealtimeTranscriptionClient {
             for (int off = 0; off <= 3 && off + k <= c.size(); off++) {
                 if (off > 0 && k < 3) continue;
                 if (!p.subList(p.size() - k, p.size()).equals(c.subList(off, off + k))) continue;
-                boolean han = c.get(off).codePointAt(0) >= 0x4E00 && c.get(off).codePointAt(0) <= 0x9FFF;
-                if (k == 1 && (han || c.get(off).length() <= 3)) continue;
+                int first = c.get(off).codePointAt(0);
+                boolean han = first >= 0x4E00 && first <= 0x9FFF;
+                boolean thai = first >= 0x0E00 && first <= 0x0E7F;
+                if (k == 1 && (han || thai || c.get(off).length() <= 3)) continue;
+                if (thai && k < 6) continue; // Thai units are single characters (vowel and tone marks count): a short coincidence such as "ครับ" is not a repeat
                 return cur.substring(ends.get(off + k - 1)).replaceFirst("^[\\s,.;:!?，。；：！？-]+", "");
             }
         }

@@ -78,6 +78,7 @@ public class JunoSpeechService {
         String voice = "male".equalsIgnoreCase(voiceKind) ? voiceMale : voiceFemale;
         String toneKey = tone != null && TONES.containsKey(tone) ? tone : "warm";
         String code = JunoPhrases.normalize(lang);
+        input = Languages.voiceAdapt(code, input, "male".equalsIgnoreCase(voiceKind));
         String key = voice + "|" + toneKey + "|" + code + "|" + input;
         byte[] hit = cache.get(key);
         if (hit != null) return hit;

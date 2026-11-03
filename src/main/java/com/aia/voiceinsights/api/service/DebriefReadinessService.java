@@ -113,7 +113,7 @@ public class DebriefReadinessService {
     private final ChatModel chatModel;
     private final ObjectMapper mapper = new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    public DebriefReadinessService(@Qualifier("azureOpenAiChatModel") ChatModel chatModel) {
+    public DebriefReadinessService(@Qualifier("localizingChatModel") ChatModel chatModel) {
         this.chatModel = chatModel;
     }
 

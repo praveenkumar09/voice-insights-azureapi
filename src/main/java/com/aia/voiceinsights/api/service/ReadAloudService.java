@@ -249,6 +249,7 @@ public class ReadAloudService {
                 .replaceAll("(?m)^\\s*\\d+[.)]\\s+", "")
                 .replaceAll("(?i)\\bSGD\\s?([0-9][0-9,]*(?:\\.[0-9]+)?)", "$1 Singapore dollars")
                 .replaceAll("(?i)\\bS\\$\\s?([0-9][0-9,]*(?:\\.[0-9]+)?)", "$1 Singapore dollars")
+                .replaceAll("\\b" + BusinessUnits.current().currency() + "\\s?([0-9][0-9,]*(?:\\.[0-9]+)?)", "$1 " + BusinessUnits.currencyWords())
                 .replaceAll("\\s*/\\s*year\\b", " a year")
                 .replaceAll("\\s*/\\s*month\\b", " a month")
                 .replace("%", " percent")

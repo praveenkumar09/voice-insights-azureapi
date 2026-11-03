@@ -20,7 +20,7 @@ import java.util.Optional;
 
 /**
  * The follow-up message the advisor can send the customer straight after a debrief, drafted from what the debrief captured, in
- * English, Mandarin, Malay or Tamil. It is only a draft: nothing is sent from here, the advisor reviews it and sends it themselves.
+ * English, Mandarin, Malay, Tamil, Thai, Filipino or Vietnamese. It is only a draft: nothing is sent from here, the advisor reviews it and sends it themselves.
  * It never quotes prices, returns or guarantees and never names a product.
  */
 @Service
@@ -76,7 +76,7 @@ public class DebriefFollowUpService {
     private final LiveCopilotService copilotService;
     private final ObjectMapper mapper = new ObjectMapper().configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    public DebriefFollowUpService(@Qualifier("azureOpenAiChatModel") ChatModel chatModel, CustomerProfileStore profileStore,
+    public DebriefFollowUpService(@Qualifier("localizingChatModel") ChatModel chatModel, CustomerProfileStore profileStore,
                                   LiveCopilotService copilotService) {
         this.chatModel = chatModel;
         this.profileStore = profileStore;
@@ -92,6 +92,7 @@ public class DebriefFollowUpService {
         try {
             List<Flag> flags = flagsOf(p);
             String user = "LANGUAGE: " + language + "\n"
+                    + "LANGUAGE STYLE: " + Languages.of(lang).writingStyle() + "\n"
                     + "CUSTOMER FIRST NAME: " + firstName(p) + "\n"
                     + "FACTS: " + copilotService.knownFacts(p) + "\n"
                     + "WHAT MATTERS TO THEM: " + dreamsAndWorries(p) + "\n"
