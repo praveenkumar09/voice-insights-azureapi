@@ -39,6 +39,7 @@ public class ProfileExtractionService {
             English (translate goals, occupation and so on). Personal names must be written in Latin letters: if a name is said in Chinese, Tamil or another script, write it romanised (for example pinyin), never in the original script. A name already written in Latin letters in the transcript keeps every accent and diacritic exactly as written there (write "Nguyễn Văn Hùng", never "Nguyen Van Hung"; "José", never "Jose"). If the customer spells their name letter by letter
             (for example "C-H-E-N"), the spelled letters are the correct spelling of that name — use them
             instead of any earlier guess.
+            interests: the CUSTOMER's own hobbies, lifestyle and wellness interests, each as a short English phrase ("maintain his fitness", "golf", "travel with family"); only what they said or clearly implied about themselves, never anyone else's, and never a financial goal (those go in goalsAndConcerns).
             The profile describes ONE person: the main customer (the person being advised, e.g. the one named "Mr Lim").
             Facts about anyone else (spouse, wife, husband, children, parents, friends) must NEVER go into customerName,
             age, occupation, incomeBand or existingPolicies. For example, "his wife is a housewife" or "she is 38" is about the
@@ -66,6 +67,7 @@ public class ProfileExtractionService {
               "dependents": null,
               "existingPolicies": [string],
               "goalsAndConcerns": [string],
+              "interests": [string],
               "budgetNotes": string or null,
               "notes": "any other relevant free-text context, or null"
             }
@@ -132,6 +134,7 @@ public class ProfileExtractionService {
             }
             profile.setExistingPolicies(toList(root.path("existingPolicies")).stream().map(Calc::withCurrencyCodes).toList());
             profile.setGoalsAndConcerns(toList(root.path("goalsAndConcerns")).stream().map(Calc::withCurrencyCodes).toList());
+            if (root.has("interests")) profile.setInterests(toList(root.path("interests")));
             applyIfPresent(root, "budgetNotes", v -> profile.setBudgetNotes(Calc.withCurrencyCodes(v)));
             applyIfPresent(root, "notes", v -> profile.setNotes(Calc.withCurrencyCodes(v)));
         } catch (Exception e) {

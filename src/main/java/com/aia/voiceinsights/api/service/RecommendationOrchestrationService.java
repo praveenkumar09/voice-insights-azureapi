@@ -42,6 +42,7 @@ public class RecommendationOrchestrationService {
     private final CustomerProfileStore profileStore;
     private final RecommendationAgentService agentService;
     private final AdvicePackService advicePackService;
+    private final CampaignAgentService campaignAgent;
     private final ExecutorService executor = new ThreadPoolExecutor(
             4, MAX_CONCURRENT_RUNS, 60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(200));
 
@@ -50,13 +51,15 @@ public class RecommendationOrchestrationService {
                                                RecommendationEventBus eventBus,
                                                CustomerProfileStore profileStore,
                                                RecommendationAgentService agentService,
-                                               AdvicePackService advicePackService) {
+                                               AdvicePackService advicePackService,
+                                               CampaignAgentService campaignAgent) {
         this.graphFactory = graphFactory;
         this.store = store;
         this.eventBus = eventBus;
         this.profileStore = profileStore;
         this.agentService = agentService;
         this.advicePackService = advicePackService;
+        this.campaignAgent = campaignAgent;
     }
 
     public String startRun(String customerProfileId) {
@@ -69,6 +72,8 @@ public class RecommendationOrchestrationService {
 
         log.info("Recommendation run {} queued for customer {}", runId, customerProfileId);
         executor.submit(() -> runGraph(runId, profile));
+        // The campaign agent runs beside the graph, on its own pool, never inside it: it can neither slow nor fail the other agents.
+        campaignAgent.startAsync(runId, profile);
         return runId;
     }
 

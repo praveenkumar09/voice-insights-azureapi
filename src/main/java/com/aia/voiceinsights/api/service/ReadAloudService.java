@@ -43,7 +43,8 @@ public class ReadAloudService {
             Respond with ONLY a JSON object, no markdown fences: {"script": "..."}
 
             Order: who the customer is (name, age, job, family) in one sentence; what matters most to them; the top suggestions, by name,
-            described only in words ("highly relevant"), never with a score or percentage; anything the advisor said that needs
+            described only in words ("highly relevant"), never with a score or percentage; if CAMPAIGNS are listed, one sentence naming the
+            suggested campaign or campaigns and why they fit this customer (if none are listed, say nothing about campaigns); anything the advisor said that needs
             clarifying; what is still missing from the fact-find; the first two questions to ask at the next meeting.
             Rules: no lists, headings, markdown, emojis or symbols; say numbers and money as you would speak them. Never invent a fact,
             product, name or figure that is not in the material. Say "suggested", never "recommended". Start with "Here's your briefing on
@@ -212,6 +213,8 @@ public class ReadAloudService {
                     .append(", dependants ").append(profile.getDependents()).append(", budget ").append(profile.getBudgetNotes()).append("\n\n");
         }
         String md = report.get().reportMarkdown() == null ? "" : spoken(report.get().reportMarkdown());
+        String campaigns = campaignsLine(runId);
+        if (!campaigns.isEmpty()) in.append("CAMPAIGNS SUGGESTED: ").append(campaigns).append("\n\n");
         in.append("REPORT:\n").append(md.length() > 5500 ? md.substring(0, 5500) : md).append("\n\n");
         pack.ifPresent(p -> {
             if (p.nextMeeting() != null) {
@@ -231,6 +234,27 @@ public class ReadAloudService {
             briefCache.put(key, r);
         }
         return Optional.of(r);
+    }
+
+    /** The campaigns suggested for a run, as one line for the briefing ("" when there are none, or the campaign check did not finish). */
+    String campaignsLine(String runId) {
+        try {
+            return recommendations.getRunView(runId).flatMap(v -> v.steps().stream().filter(s -> "campaign".equals(s.agentKey()) && "COMPLETED".equals(s.status())).findFirst())
+                    .map(s -> campaignsLine(mapper.valueToTree(s.output()))).orElse("");
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    /** From the campaign agent's stored result. Package-private for tests. */
+    static String campaignsLine(com.fasterxml.jackson.databind.JsonNode result) {
+        StringBuilder sb = new StringBuilder();
+        for (var m : result.path("matches")) {
+            if (sb.length() > 0) sb.append(" | ");
+            sb.append(m.path("name").asText()).append(": ").append(m.path("reason").asText());
+            if (!m.path("validUntil").asText("").isEmpty()) sb.append(" (runs until ").append(m.path("validUntil").asText()).append(')');
+        }
+        return sb.toString();
     }
 
     // ── making text speakable ───────────────────────────────────────────────────────────────────────────────────

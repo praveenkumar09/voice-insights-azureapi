@@ -26,6 +26,8 @@ public class CustomerProfile {
     private List<String> dependantsList = new ArrayList<>();
     private List<String> existingPolicies = new ArrayList<>();
     private List<String> goalsAndConcerns = new ArrayList<>();
+    /** Hobbies, lifestyle and wellness interests the customer mentioned ("wants to maintain his fitness", "golf"): what campaigns are matched on besides goals. */
+    private List<String> interests = new ArrayList<>();
     private String budgetNotes;
     private String notes;
 
@@ -71,6 +73,9 @@ public class CustomerProfile {
     public void setExistingPolicies(List<String> existingPolicies) { this.existingPolicies = existingPolicies; }
 
     public List<String> getGoalsAndConcerns() { return goalsAndConcerns; }
+    public List<String> getInterests() { return interests; }
+    public void setInterests(List<String> interests) { this.interests = interests == null ? new ArrayList<>() : interests; }
+
     public void setGoalsAndConcerns(List<String> goalsAndConcerns) { this.goalsAndConcerns = goalsAndConcerns; }
 
     public String getBudgetNotes() { return budgetNotes; }

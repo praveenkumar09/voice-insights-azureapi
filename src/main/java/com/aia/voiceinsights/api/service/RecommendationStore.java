@@ -32,7 +32,8 @@ public class RecommendationStore {
     public static final List<String> PIPELINE_ORDER = List.of(
             "need", "risk", "affordability", "merge",
             "persona", "productScoring", "productShortlist",
-            "ragValidation", "complianceCheck", "summary", "salesReport"
+            "ragValidation", "complianceCheck", "summary", "salesReport",
+            "campaign" // runs beside the graph (CampaignAgentService); listed last because it is not part of the chain
     );
 
     private final JdbcTemplate jdbc;

@@ -57,7 +57,7 @@ public class LocalizingChatModel implements ChatModel {
                 messages.add(new SystemMessage(BusinessUnits.localize(s.getText()) + (noted ? "" : BusinessUnits.currencyNote())));
                 noted = true;
             } else if (m instanceof UserMessage u) {
-                messages.add(new UserMessage(BusinessUnits.convertAmounts(u.getText())));
+                messages.add(new UserMessage(BusinessUnits.convertAmounts(u.getText()), u.getMedia())); // pictures (a campaign poster) are kept
             } else {
                 messages.add(m);
             }
