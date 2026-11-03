@@ -130,10 +130,10 @@ public class ProfileExtractionService {
             } else if (root.hasNonNull("dependents")) {
                 profile.setDependents(root.get("dependents").asInt());
             }
-            profile.setExistingPolicies(toList(root.path("existingPolicies")));
-            profile.setGoalsAndConcerns(toList(root.path("goalsAndConcerns")));
-            applyIfPresent(root, "budgetNotes", profile::setBudgetNotes);
-            applyIfPresent(root, "notes", profile::setNotes);
+            profile.setExistingPolicies(toList(root.path("existingPolicies")).stream().map(Calc::withCurrencyCodes).toList());
+            profile.setGoalsAndConcerns(toList(root.path("goalsAndConcerns")).stream().map(Calc::withCurrencyCodes).toList());
+            applyIfPresent(root, "budgetNotes", v -> profile.setBudgetNotes(Calc.withCurrencyCodes(v)));
+            applyIfPresent(root, "notes", v -> profile.setNotes(Calc.withCurrencyCodes(v)));
         } catch (Exception e) {
             // Best-effort — leave the profile's prior fields untouched, but log it:
             // a silent catch here previously hid a real bug with no trace at all.

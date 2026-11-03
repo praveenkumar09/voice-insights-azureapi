@@ -113,7 +113,7 @@ public final class Calc {
     }
 
     private static final Pattern OTHER_CURRENCY = Pattern.compile(
-            "(?i)(THB|baht|บาท|฿)|(HKD|HK\\$)|(CNY|RMB|yuan|¥|元|人民币)|(MYR|ringgit|\\bRM\\s?\\d)|(IDR|rupiah|\\bRp\\b)|(PHP|₱|pesos?)|(VND|₫|đồng|\\bdong\\b)");
+            "(?i)(THB|baht|บาท|฿)|(HKD|HK\\$)|(CNY|RMB|yuan|¥|元|人民币)|(MYR|ringgit|\\bRM\\s?\\d)|(IDR|rupiah|\\bRp\\b)|(PHP|₱|pesos?|piso)|(VND|₫|đồng|\\bdong\\b)");
     private static final String[] OTHER_CODES = {"THB", "HKD", "CNY", "MYR", "IDR", "PHP", "VND"};
 
     /** The currency a figure was said in when it is not dollars ("90,000 baht" -> "THB"); null for dollars or when nothing says. */
@@ -123,6 +123,25 @@ public final class Calc {
         if (!m.find()) return null;
         for (int i = 0; i < OTHER_CODES.length; i++) if (m.group(i + 1) != null) return OTHER_CODES[i];
         return null;
+    }
+
+    /**
+     * Amounts in free text written with the same currency code wherever they appear, whichever way the model wrote them: "₱5,000" and "5,000 pesos" are
+     * "PHP 5,000" (income was already kept that way, and a profile that says PHP 50,000 in one place and ₱5,000 in another reads as two currencies).
+     * Dollars and anything unrecognised are left alone.
+     */
+    public static String withCurrencyCodes(String text) {
+        if (text == null) return null;
+        return text
+                .replaceAll("₱\\s?(?=\\d)", "PHP ")
+                .replaceAll("฿\\s?(?=\\d)", "THB ")
+                .replaceAll("HK\\$\\s?(?=\\d)", "HKD ")
+                .replaceAll("\\bRM\\s?(?=\\d)", "MYR ")
+                .replaceAll("\\bRp\\.?\\s?(?=\\d)", "IDR ")
+                .replaceAll("(\\d[\\d.,]*)\\s?₫", "VND $1")
+                .replaceAll("(?i)(\\d[\\d.,]*)\\s?(?:pesos?|piso)\\b", "PHP $1")
+                .replaceAll("(?i)(\\d[\\d.,]*)\\s?baht\\b", "THB $1")
+                .replaceAll("(?i)(\\d[\\d.,]*)\\s?ringgit\\b", "MYR $1");
     }
 
     public static String format(Money m) {
