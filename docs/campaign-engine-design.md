@@ -166,6 +166,14 @@ banner, navy and gold, serif type, three numbered panels, different wording ("Bu
   Vitality to "He exercises regularly and he wants to keep up his fitness." and Wealth to "He also wants to plan his legacy for his children." Both cards,
   with their different poster shapes, rendered correctly on the suggestion page.
 
+- **Age rule, live.** Priya Nair (28; wants to stay fit and to plan a legacy for her family) was analysed: `active: 2, candidates: 1`. AIA Wealth (30 to 65) was
+  excluded **in code** although she said she wanted legacy planning; only Vitality matched, with the reworded reason "AIA Vitality could fit because Priya said she goes
+  running every morning and wants to keep up her fitness."
+- **No fitting campaign, live.** Kevin Lau (40; worried about his housing loan if he lost his job or fell ill; thinking of a critical illness plan) was analysed:
+  `active: 2, candidates: 1, matches: []`, verified. AIA Wealth was close enough in meaning ("protect the family") to be looked at, and the verification step rejected
+  it because he never expressed an interest in what the poster offers. The suggestion page showed the products and **no campaign section at all**. This is the
+  intended two-stage behaviour: the embedding step is generous (cheap, so a candidate costs nothing), the grounded check is strict.
+
 ## Tests
 - **Backend:** 99 tests pass (the resilience changes above are exercised live, not by unit tests); 16 are new (`CampaignEngineTest`): ranking and thresholds, signals (Spark's lines excluded, duplicates, cap), age rule, activation rules,
   that the quote is always a real signal and bad model verdicts are ignored, the top-three order, poster-reading bounds and rejection, image scaling and
@@ -175,9 +183,7 @@ banner, navy and gold, serif type, three numbered panels, different wording ("Bu
   the campaign card with the right quote; the Campaign Agent finished with the first three agents; the analysis time was unchanged.
 
 ## Known limits and next steps
-- **Not yet tested live:** a debrief where **no** campaign fits (the section should not appear: covered by the empty-result handling and the 0.26 probe, but not
-  yet seen end to end); posters in other languages; low-quality images; hearing the spoken briefing mention a campaign (the wiring is unit-tested);
-  a customer whose age is outside a poster's range (the rule is unit-tested; the live debrief customers were inside the range).
+- **Not yet tested live:** posters in other languages; low-quality images; hearing the spoken briefing mention a campaign (the wiring is unit-tested).
 - **A debrief's wording is matched in the debrief's language;** the signals are written in English. Multilingual embeddings handle most cases, but this should be
   measured per language (Thai, Filipino, Vietnamese) before relying on it.
 - **Posters are images only;** PDF posters (several pages) and WebP are not accepted yet.
