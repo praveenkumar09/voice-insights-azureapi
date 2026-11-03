@@ -41,6 +41,9 @@ The dummy test poster is `voice-insights-ui/public/vitality-campaign-poster.png`
 6. **Embed** (`embed`): one embedding for the overview (name, summary, themes), one for each offer, one for each signal: 12 vectors for the Vitality poster,
    stored in pgvector in the same transaction as the extracted fields, so the two can never disagree.
 7. **Draft.** The campaign is saved as `DRAFT`. If reading fails it is `FAILED` with a message and a "Try again" button; the poster is kept.
+8. **A reading cannot hang or be lost.** Azure now and then leaves a request open for a minute or more, so the vision call has its own pool, a **45 s deadline
+   per attempt and one retry** (a bad poster is not retried: it cannot help). If the service restarts while a poster is being read, the reading is
+   **resumed on start-up** (any campaign still "Reading…" after 2 minutes is read again). The editor says "taking longer than usual" after 90 s, with a button.
 
 ## The admin review
 The editor shows the poster beside every extracted field: name, summary, themes, offers, customer signals, dates, age range, audience note, business
@@ -77,7 +80,8 @@ threshold marked. It uses embeddings only (no language-model call, no side effec
 ## Why it cannot slow down the other agents
 - **Not in the graph.** The graph has no campaign node and no join waits for it. The agent is started beside the graph and finishes on its own.
 - **Own pools.** A burst of runs queues campaign work only; it never takes a thread from the agent pools.
-- **Own deadline** (`voice.campaign.timeout-ms`, 6000): the check is abandoned and the fallback used.
+- **Own deadline** (`voice.campaign.timeout-ms`, 6000): the embedding call and the check are each bounded by it; the check is abandoned and the fallback used.
+  Test matching bounds its embedding call too (20 s) and answers "try again" instead of hanging.
 - **Failure is isolated.** An exception or timeout produces "no campaigns" and a `FAILED` audit step. A run never fails because of it.
 - **Idle cost is zero.** No live campaign: no embedding call, no model call. No candidate: no model call. Otherwise it costs one embedding call (batched) and
   one small chat call.
@@ -145,8 +149,25 @@ trail and "Brief me" all read the same thing.
 | `voice.campaign.max-candidates` | 4 | candidates sent to the check |
 | `voice.campaign.max-signals` | 40 | sentences of the debrief used |
 
+## A second poster, in a different style (AIA Wealth)
+To check the design does not depend on one poster's look, a second poster was made in a completely different format and tone: a 1600 x 900 landscape
+banner, navy and gold, serif type, three numbered panels, different wording ("Build wealth. Leave a legacy."), with an age range of 30 to 65 and dates
+15 Nov 2026 to 28 Feb 2027 (`voice-insights-ui/public/aia-wealth-campaign-poster.png`).
+- **Reading:** read as the brand "AIA Wealth" (not the "Private client programme" tag line), with the right themes, offers, dates, **age range 30 to 65**, call
+  to action and terms, high confidence. Two of its eight customer signals were phrased as pitch ("suggests estate planning"); the prompt now requires what the
+  *customer* wants or feels.
+- **Test matching** for "He prefers to stay fit and exercise regularly. He also wants to plan the legacy he leaves for his children." scored **AIA Vitality about 0.70**
+  (closest to the fitness sentence) and **AIA Wealth about 0.56** (closest to the legacy sentence): each campaign found its own sentence.
+- **Date rule, live.** AIA Wealth was made live on 3 Nov with its real start date (15 Nov). A debrief for Michael Ong (45, wants to stay fit and to plan a legacy for
+  his children) was analysed: the agent reported `active: 1`, so only Vitality was considered and matched (Strong fit, quote "He exercises regularly and he
+  wants to keep up his fitness."). Wealth, correctly, was held back until its start date.
+- **Both campaigns.** After editing Wealth's start date to today (an edit of a live campaign: no re-embedding was needed, its 12 vectors were kept) the same
+  debrief produced `active: 2, candidates: 2, verified: true` in 3.3 s, with **both campaigns matched as Strong fit**, each tied to its own sentence of the debrief:
+  Vitality to "He exercises regularly and he wants to keep up his fitness." and Wealth to "He also wants to plan his legacy for his children." Both cards,
+  with their different poster shapes, rendered correctly on the suggestion page.
+
 ## Tests
-- **Backend:** 99 tests pass; 16 are new (`CampaignEngineTest`): ranking and thresholds, signals (Spark's lines excluded, duplicates, cap), age rule, activation rules,
+- **Backend:** 99 tests pass (the resilience changes above are exercised live, not by unit tests); 16 are new (`CampaignEngineTest`): ranking and thresholds, signals (Spark's lines excluded, duplicates, cap), age rule, activation rules,
   that the quote is always a real signal and bad model verdicts are ignored, the top-three order, poster-reading bounds and rejection, image scaling and
   validation, edit validation, and that the briefing finds the campaign step of a stored run.
 - **Frontend:** 11 tests pass (unchanged); the type check is clean.
@@ -155,12 +176,15 @@ trail and "Brief me" all read the same thing.
 
 ## Known limits and next steps
 - **Not yet tested live:** a debrief where **no** campaign fits (the section should not appear: covered by the empty-result handling and the 0.26 probe, but not
-  yet seen end to end); posters in other languages; low-quality images; hearing the spoken briefing mention a campaign (the wiring is unit-tested).
+  yet seen end to end); posters in other languages; low-quality images; hearing the spoken briefing mention a campaign (the wiring is unit-tested);
+  a customer whose age is outside a poster's range (the rule is unit-tested; the live debrief customers were inside the range).
 - **A debrief's wording is matched in the debrief's language;** the signals are written in English. Multilingual embeddings handle most cases, but this should be
   measured per language (Thai, Filipino, Vietnamese) before relying on it.
 - **Posters are images only;** PDF posters (several pages) and WebP are not accepted yet.
 - **Campaign cards are shown to the advisor, not yet put in the customer's proposal or follow-up message.**
 - **Scale.** Vectors are compared in memory (a few hundred is instant). With thousands of campaigns, move the comparison into pgvector (an HNSW or IVF index on
   `campaign_vectors`) and keep the rest unchanged.
+- **The Azure connection from a developer machine is not always stable** (premature connection closes were seen; the SDK retried and succeeded). In production
+  the same bounds apply: a failed embedding or check produces no campaigns, never an error on the page.
 - **Analytics:** no click, view or conversion tracking on campaigns yet; the audit step (live count, candidates, time, verified) is the only record.
 - **Brief-me** says "suggested campaigns" from the stored run; it does not yet speak validity dates unless the model chooses to.

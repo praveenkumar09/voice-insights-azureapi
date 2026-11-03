@@ -95,6 +95,12 @@ public class CampaignStore {
                 error == null ? "The poster could not be read." : error.substring(0, Math.min(400, error.length())), id);
     }
 
+    /** Campaigns whose poster reading started more than {@code minutes} ago and never finished (the service restarted, or a call was lost). */
+    public List<String> staleAnalyzing(int minutes) {
+        return jdbc.queryForList("SELECT id FROM %s.campaigns WHERE analysis_status = 'ANALYZING' AND updated_at < now() - make_interval(mins => ?)".formatted(schema),
+                String.class, minutes);
+    }
+
     public void markAnalyzing(String id) {
         jdbc.update("UPDATE %s.campaigns SET analysis_status = 'ANALYZING', analysis_error = NULL, updated_at = now() WHERE id = ?".formatted(schema), id);
     }

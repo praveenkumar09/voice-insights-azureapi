@@ -4,6 +4,7 @@ import com.aia.voiceinsights.api.model.Campaign;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,7 +39,11 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Reads a campaign poster ONCE, when it is uploaded, so that nothing about the poster is analysed while a customer is being advised.
@@ -73,7 +78,7 @@ public class CampaignAnalysisService {
               "summary": "what the campaign is and who it is for, in two plain sentences, max 45 words",
               "themes": ["3 to 6 short topics, 1-3 words each: e.g. fitness, health screening, family protection, rewards"],
               "benefits": ["each benefit or offer exactly as the poster states it, max 15 words each, up to 6"],
-              "customerSignals": ["6 to 8 short statements a customer or advisor might make that this campaign answers, each 4-12 words, in plain English, covering different ways of saying it: e.g. 'wants to stay fit and exercise regularly', 'interested in gym and wellness', 'wants to track his health'"],
+              "customerSignals": ["6 to 8 short statements about the CUSTOMER'S own interest, goal or worry that this campaign answers, each 4-12 words, in plain English, covering different ways of saying it: e.g. 'wants to stay fit and exercise regularly', 'interested in gym and wellness', 'worried about what he leaves his children'. Always what the customer wants or feels; never what the advisor or the poster offers or suggests (not 'suggests estate planning' but 'wants to plan his estate')"],
               "minAge": integer or null, "maxAge": integer or null, "audienceNote": "who may join, as stated, or null",
               "startsOn": "YYYY-MM-DD or null", "endsOn": "YYYY-MM-DD or null",
               "language": "the language the poster is written in, as a code: en, zh, ms, ta, th, fil, vi",
@@ -103,8 +108,36 @@ public class CampaignAnalysisService {
         this.embeddings = embeddings;
     }
 
+    /**
+     * The vision calls run on their own pool, so a call that never answers cannot hold up the workers that do the rest. Azure now and then leaves a
+     * request open for a minute or more; a reading therefore has a deadline per attempt and one retry (a poster is read once, so a retry is cheap).
+     */
+    private final ExecutorService vision = Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r, "campaign-vision");
+        t.setDaemon(true);
+        return t;
+    });
+    static final int ATTEMPTS = 2;
+    static final long ATTEMPT_TIMEOUT_MS = 45_000;
+
     @PreDestroy
-    void shutdown() { executor.shutdown(); }
+    void shutdown() {
+        executor.shutdown();
+        vision.shutdownNow();
+    }
+
+    /** After a restart, a poster that was being read when the service stopped would stay "Reading…" for ever: read it again. */
+    @PostConstruct
+    void resumeUnfinished() {
+        try {
+            for (String id : store.staleAnalyzing(2)) {
+                log.info("Campaign {} was left unfinished; reading its poster again", id);
+                reanalyse(id);
+            }
+        } catch (RuntimeException e) {
+            log.warn("Could not resume unfinished campaign readings: {}", e.toString());
+        }
+    }
 
     /** Thrown for a file the admin should fix (not an image, too small, too large); the message is shown to them. */
     public static class BadPoster extends RuntimeException {
@@ -145,6 +178,25 @@ public class CampaignAnalysisService {
     }
 
     private Campaign extract(byte[] image) throws Exception {
+        Exception last = null;
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            Future<Campaign> call = vision.submit(() -> read(image));
+            try {
+                return call.get(ATTEMPT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                call.cancel(true);
+                last = e;
+                log.warn("Poster reading attempt {} gave no answer in {} s", attempt, ATTEMPT_TIMEOUT_MS / 1000);
+            } catch (ExecutionException e) {
+                if (e.getCause() instanceof BadPoster bad) throw bad; // the poster itself is the problem: a retry cannot help
+                last = e;
+                log.warn("Poster reading attempt {} failed: {}", attempt, e.getCause() == null ? e : e.getCause().toString());
+            }
+        }
+        throw new IllegalStateException("The poster could not be read in time.", last);
+    }
+
+    private Campaign read(byte[] image) throws Exception {
         var response = chatModel.call(new Prompt(
                 List.of(new SystemMessage(SYSTEM),
                         new UserMessage("Read this poster.", new Media(MimeTypeUtils.IMAGE_JPEG, new ByteArrayResource(image)))),

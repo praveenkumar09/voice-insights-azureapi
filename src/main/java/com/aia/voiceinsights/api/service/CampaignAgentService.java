@@ -74,8 +74,9 @@ public class CampaignAgentService {
               connection, a campaign that merely sounds nice, or interest that the notes never mention is false.
             - signal: the number of the single signal that shows it best.
             - strength: "strong" (the customer clearly said it), "related" (clearly connected), "worth_discussing" (a reasonable conversation starter).
-            - reason: one plain sentence for the advisor, max 28 words, naming the campaign and tying it to what the customer said. Use "suggest" or
-              "could fit", never "recommend". Never state an offer, benefit or figure that is not in the campaign text given.
+            - reason: one plain sentence for the advisor, max 28 words, naming the campaign and tying it to what the customer said, in the form
+              "<Campaign> could fit because <customer> said <what they said>." Never use the words "recommend", "recommended" or "suggestion" in it.
+              Never state an offer, benefit or figure that is not in the campaign text given.
 
             Respond with ONLY a JSON object, no markdown fences:
             {"campaigns": [{"id": "campaign id", "fits": true, "signal": 3, "strength": "strong", "reason": "..."}]}
@@ -163,9 +164,9 @@ public class CampaignAgentService {
         List<Signal> signals = signalsOf(profile, maxSignals);
         if (signals.isEmpty()) return Campaign.Result.none(live.size(), ms(t0), "The debrief has nothing to match campaigns on yet.");
 
-        Cache c = vectorsFor(live);
-        List<float[]> sig = embeddings.embed(signals.stream().map(Signal::text).toList());
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        Cache c = vectorsFor(live);
+        List<float[]> sig = within(() -> embeddings.embed(signals.stream().map(Signal::text).toList()), Math.max(1500, timeoutMs - 1000));
 
         List<Scored> ranked = rank(sig, c.vectors(), minSimilarity);
         Map<String, Campaign> byId = new HashMap<>();
@@ -262,12 +263,12 @@ public class CampaignAgentService {
     // ── the admin's "test matching" ──────────────────────────────────────────────────────────────────────────
 
     /** How every read campaign (live or not) relates to some typed sentences. Embeddings only: it never calls the language model. */
-    public List<Probe> probe(List<String> sentences) {
+    public List<Probe> probe(List<String> sentences) throws Exception {
         List<String> clean = sentences.stream().map(String::strip).filter(x -> !x.isEmpty()).limit(12).toList();
         if (clean.isEmpty()) return List.of();
         List<Signal> signals = new ArrayList<>();
         for (int i = 0; i < clean.size(); i++) signals.add(new Signal(i, clean.get(i), "typed"));
-        List<float[]> sig = embeddings.embed(clean);
+        List<float[]> sig = within(() -> embeddings.embed(clean), 20_000);
         List<Campaign> all = store.list().stream().filter(c -> Campaign.READY.equals(c.analysisStatus())).toList();
         Map<String, List<float[]>> vectors = new HashMap<>();
         Map<String, List<String>> labels = new HashMap<>();
@@ -293,6 +294,19 @@ public class CampaignAgentService {
     }
 
     public double minSimilarity() { return minSimilarity; }
+
+    /** Runs a call that talks to the network on a worker thread and gives up after {@code ms}: nothing here may wait on Azure for ever. */
+    private <T> T within(java.util.concurrent.Callable<T> task, long ms) throws Exception {
+        Future<T> f = verifier.submit(task);
+        try {
+            return f.get(ms, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            f.cancel(true);
+            throw e;
+        } catch (java.util.concurrent.ExecutionException e) {
+            throw e.getCause() instanceof Exception ex ? ex : e;
+        }
+    }
 
     // ── pure helpers (unit-tested) ───────────────────────────────────────────────────────────────────────────
 

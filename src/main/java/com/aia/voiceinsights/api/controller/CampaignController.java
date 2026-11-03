@@ -130,9 +130,13 @@ public class CampaignController {
 
     /** "Test matching": how each read campaign relates to a few sentences, by meaning. No language-model call, no side effects. */
     @PostMapping(value = "/probe", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-    public Map<String, Object> probe(@RequestBody Probe body) {
+    public ResponseEntity<?> probe(@RequestBody Probe body) {
         List<String> sentences = List.of((body.text() == null ? "" : body.text()).split("(?<=[.!?。！？])\\s+|\\n+"));
-        return Map.of("results", agent.probe(sentences), "threshold", agent.minSimilarity());
+        try {
+            return ResponseEntity.ok(Map.of("results", agent.probe(sentences), "threshold", agent.minSimilarity()));
+        } catch (Exception e) {
+            return ResponseEntity.status(503).body(Map.of("error", "Could not reach the language service just now. Try again in a moment."));
+        }
     }
 
     // ── helpers (package-private for tests) ──────────────────────────────────────────────────────────────────
