@@ -72,22 +72,33 @@ public class CampaignAnalysisService {
             Never invent an offer, a number, a date, a partner or an eligibility rule that is not on the poster. If something is not legible or not
             there, leave it null or empty, and say so in "confidence".
 
+            A poster usually promotes ONE campaign. Some promote two or more, each with its own brand or programme name, its own headline and its own
+            offer, usually in separate panels (for example the top half and the bottom half, or the left and the right). Report one entry in
+            "campaigns" for each such campaign, up to 4. Do NOT split one campaign into several because it lists several benefits, and do not make
+            an entry for a footer, a logo strip or small print. Each entry covers only what belongs to that campaign: its own summary, benefits,
+            text and signals. Dates, age limits and small print that apply to the whole poster are repeated in every entry.
+
             Respond with ONLY a JSON object, no markdown fences:
             {
-              "name": "the programme or brand the poster promotes, as written (for example 'AIA Vitality'), not a small tag line or category label such as 'Healthy Living Campaign'; if the poster has no brand, its main headline; max 6 words",
-              "summary": "what the campaign is and who it is for, in two plain sentences, max 45 words",
-              "themes": ["3 to 6 short topics, 1-3 words each: e.g. fitness, health screening, family protection, rewards"],
-              "benefits": ["each benefit or offer exactly as the poster states it, max 15 words each, up to 6"],
-              "customerSignals": ["6 to 8 short statements about the CUSTOMER'S own interest, goal or worry that this campaign answers, each 4-12 words, in plain English, covering different ways of saying it: e.g. 'wants to stay fit and exercise regularly', 'interested in gym and wellness', 'worried about what he leaves his children'. Always what the customer wants or feels; never what the advisor or the poster offers or suggests (not 'suggests estate planning' but 'wants to plan his estate')"],
-              "minAge": integer or null, "maxAge": integer or null, "audienceNote": "who may join, as stated, or null",
-              "startsOn": "YYYY-MM-DD or null", "endsOn": "YYYY-MM-DD or null",
-              "language": "the language the poster is written in, as a code: en, zh, ms, ta, th, fil, vi",
-              "callToAction": "what the poster asks the reader to do, or null",
-              "terms": "the small print or conditions as written, or null",
-              "verbatimText": "every piece of text on the poster, in reading order, one line per block",
-              "confidence": "high | medium | low: how sure you are that the fields above match the poster",
-              "isCampaignPoster": true or false
+              "isCampaignPoster": true or false,
+              "campaigns": [ {
+                "name": "the programme or brand this campaign promotes, as written (for example 'AIA Vitality'), not a small tag line or category label such as 'Healthy Living Campaign'; if there is no brand, its main headline; max 6 words",
+                "summary": "what the campaign is and who it is for, in two plain sentences, max 45 words",
+                "themes": ["3 to 6 short topics, 1-3 words each: e.g. fitness, health screening, family protection, rewards"],
+                "benefits": ["each benefit or offer exactly as the poster states it, max 15 words each, up to 6"],
+                "customerSignals": ["6 to 8 short statements about the CUSTOMER'S own interest, goal or worry that this campaign answers, each 4-12 words, in plain English, covering different ways of saying it: e.g. 'wants to stay fit and exercise regularly', 'interested in gym and wellness', 'worried about what he leaves his children'. Always what the customer wants or feels; never what the advisor or the poster offers or suggests (not 'suggests estate planning' but 'wants to plan his estate')"],
+                "minAge": integer or null, "maxAge": integer or null, "audienceNote": "who may join, as stated, or null",
+                "startsOn": "YYYY-MM-DD or null", "endsOn": "YYYY-MM-DD or null",
+                "language": "the language the poster is written in, as a code: en, zh, ms, ta, th, fil, vi",
+                "callToAction": "what the poster asks the reader to do, or null",
+                "terms": "the small print or conditions as written, or null",
+                "verbatimText": "every piece of text of this campaign, in reading order, one line per block",
+                "confidence": "high | medium | low: how sure you are that the fields above match the poster",
+                "region": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
+              } ]
             }
+            "region" is where this campaign sits in the image, as fractions of the image's width and height (x and y: the top-left corner; w and h: the
+            size). A single campaign is the whole image {"x":0,"y":0,"w":1,"h":1}. Regions of different campaigns must not overlap.
             Dates: read "1 Nov 2026 - 31 Jan 2027" as startsOn 2026-11-01 and endsOn 2027-01-31. If only an end date is given, startsOn is null.
             customerSignals describe what the CUSTOMER wants or is interested in (never a product pitch). Use "suggest", never "recommend".
             """;
@@ -165,22 +176,66 @@ public class CampaignAnalysisService {
         executor.submit(() -> analyse(id, image.data()));
     }
 
+    /** One campaign found on a poster, and where on the poster it sits (x, y, w, h as fractions; null when the model gave none that can be used). */
+    record Panel(Campaign campaign, double[] region) {}
+
+    static final int MAX_PANELS = 4;
+
     void analyse(String id, byte[] image) {
         try {
-            Campaign extracted = extract(image);
-            List<CampaignStore.Vec> vectors = embed(id, extracted);
-            store.saveAnalysis(id, extracted, vectors);
-            log.info("Campaign {} read: \"{}\", {} themes, {} embeddings, confidence {}", id, extracted.name(), extracted.themes().size(), vectors.size(), extracted.confidence());
+            List<Panel> panels = extract(image);
+            if (panels.size() == 1) {
+                Campaign extracted = panels.get(0).campaign();
+                List<CampaignStore.Vec> vectors = embed(id, extracted);
+                store.saveAnalysis(id, extracted, vectors);
+                log.info("Campaign {} read: \"{}\", {} themes, {} embeddings, confidence {}", id, extracted.name(), extracted.themes().size(), vectors.size(), extracted.confidence());
+            } else {
+                splitPoster(id, image, panels);
+            }
         } catch (Exception e) {
             log.warn("Campaign {}: the poster could not be read: {}", id, e.toString());
             store.markFailed(id, e instanceof BadPoster ? e.getMessage() : "The poster could not be read just now. Try again.");
         }
     }
 
-    private Campaign extract(byte[] image) throws Exception {
+    /**
+     * A poster that holds several campaigns becomes one campaign each, every one with its own part of the poster as its picture, so the card on the
+     * summary page and the viewer show that campaign and not its neighbour. Everything (crops, embeddings) is prepared before anything is written,
+     * the extra campaigns are written first and the uploaded one last: an admin watching the list sees the poster finish only when all of them exist.
+     */
+    private void splitPoster(String id, byte[] image, List<Panel> found) {
+        List<Panel> panels = found;
+        BufferedImage src = decode(image);
+        boolean crop = canCrop(panels);
+        if (crop) panels = refine(src, panels);
+        List<byte[]> mains = new ArrayList<>(), thumbs = new ArrayList<>();
+        List<String> ids = new ArrayList<>();
+        List<List<CampaignStore.Vec>> vectors = new ArrayList<>();
+        for (int i = 0; i < panels.size(); i++) {
+            String cid = i == 0 ? id : UUID.randomUUID().toString();
+            BufferedImage part = crop ? crop(src, panels.get(i).region()) : src;
+            ids.add(cid);
+            mains.add(crop ? jpeg(scaled(part, MAIN_SIDE), 0.9f) : image);
+            thumbs.add(jpeg(scaled(part, THUMB_SIDE), 0.82f));
+            vectors.add(embed(cid, panels.get(i).campaign()));
+        }
+        for (int i = panels.size() - 1; i >= 0; i--) {
+            Campaign c = panels.get(i).campaign();
+            if (i == 0) {
+                store.replaceImage(id, mains.get(0), thumbs.get(0));
+                store.saveAnalysis(id, c, vectors.get(0));
+            } else {
+                store.createAnalysed(ids.get(i), c, vectors.get(i), "image/jpeg", mains.get(i), thumbs.get(i));
+            }
+        }
+        log.info("Poster {} held {} campaigns ({}): {}", id, panels.size(), crop ? "each with its own part of the picture" : "all keep the whole picture",
+                panels.stream().map(p -> p.campaign().name()).toList());
+    }
+
+    private List<Panel> extract(byte[] image) throws Exception {
         Exception last = null;
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
-            Future<Campaign> call = vision.submit(() -> read(image));
+            Future<List<Panel>> call = vision.submit(() -> read(image));
             try {
                 return call.get(ATTEMPT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             } catch (TimeoutException e) {
@@ -196,18 +251,44 @@ public class CampaignAnalysisService {
         throw new IllegalStateException("The poster could not be read in time.", last);
     }
 
-    private Campaign read(byte[] image) throws Exception {
+    private List<Panel> read(byte[] image) throws Exception {
         var response = chatModel.call(new Prompt(
                 List.of(new SystemMessage(SYSTEM),
                         new UserMessage("Read this poster.", new Media(MimeTypeUtils.IMAGE_JPEG, new ByteArrayResource(image)))),
-                AzureOpenAiChatOptions.builder().responseFormat(AzureOpenAiResponseFormat.JSON).temperature(0.1).maxTokens(1800).build()));
-        return parse(response.getResult().getOutput().getText());
+                AzureOpenAiChatOptions.builder().responseFormat(AzureOpenAiResponseFormat.JSON).temperature(0.1).maxTokens(4500).build()));
+        return parseAll(response.getResult().getOutput().getText());
     }
 
-    /** Turns the model's JSON into a campaign draft, bounding every field. Package-private for tests. */
-    Campaign parse(String json) throws Exception {
-        JsonNode n = mapper.readTree(json);
-        if (n.has("isCampaignPoster") && !n.path("isCampaignPoster").asBoolean(true)) throw new BadPoster("This image does not look like a campaign poster.");
+    /** The first campaign on a poster; for a poster with one campaign, the campaign. Package-private for tests. */
+    Campaign parse(String json) throws Exception { return parseAll(json).get(0).campaign(); }
+
+    /**
+     * Turns the model's JSON into campaign drafts (one per campaign on the poster, at most {@value #MAX_PANELS}), bounding every field. An entry
+     * that cannot be understood is left out when another can; a poster none of whose entries can be understood is refused. A reply without a
+     * "campaigns" list is read as a single campaign, so an older-shaped answer still works. Package-private for tests.
+     */
+    List<Panel> parseAll(String json) throws Exception {
+        JsonNode root = mapper.readTree(json);
+        if (root.has("isCampaignPoster") && !root.path("isCampaignPoster").asBoolean(true)) throw new BadPoster("This image does not look like a campaign poster.");
+        List<JsonNode> nodes = new ArrayList<>();
+        if (root.path("campaigns").isArray() && root.path("campaigns").size() > 0) root.path("campaigns").forEach(nodes::add);
+        else nodes.add(root);
+        List<Panel> panels = new ArrayList<>();
+        BadPoster firstProblem = null;
+        for (JsonNode n : nodes) {
+            if (panels.size() == MAX_PANELS) break;
+            try {
+                Campaign c = campaign(n);
+                if (panels.stream().noneMatch(p -> p.campaign().name().equalsIgnoreCase(c.name()))) panels.add(new Panel(c, region(n.path("region"))));
+            } catch (BadPoster e) {
+                if (firstProblem == null) firstProblem = e;
+            }
+        }
+        if (panels.isEmpty()) throw firstProblem != null ? firstProblem : new BadPoster("The poster could not be understood. Is the text readable?");
+        return List.copyOf(panels);
+    }
+
+    private static Campaign campaign(JsonNode n) {
         String name = text(n, "name", 80);
         String summary = text(n, "summary", 400);
         if (name == null || summary == null) throw new BadPoster("The poster could not be understood. Is the text readable?");
@@ -218,6 +299,172 @@ public class CampaignAnalysisService {
                 age(n, "minAge"), age(n, "maxAge"), text(n, "audienceNote", 200), date(n, "startsOn"), date(n, "endsOn"), List.of(),
                 language(n.path("language").asText("")), text(n, "callToAction", 120), text(n, "terms", 600), text(n, "verbatimText", 4000),
                 List.of("high", "medium", "low").contains(n.path("confidence").asText("")) ? n.path("confidence").asText() : "medium", true, null, null);
+    }
+
+    /** {x, y, w, h} as fractions of the picture, or null when it is missing or not a believable part of it. */
+    static double[] region(JsonNode r) {
+        if (!r.isObject()) return null;
+        for (String k : List.of("x", "y", "w", "h")) if (!r.path(k).isNumber()) return null;
+        double x = r.path("x").asDouble(), y = r.path("y").asDouble(), w = r.path("w").asDouble(), h = r.path("h").asDouble();
+        if (x < -0.02 || y < -0.02 || w < 0.1 || h < 0.1 || x + w > 1.03 || y + h > 1.03) return null;
+        x = Math.max(0, x);
+        y = Math.max(0, y);
+        return new double[] {x, y, Math.min(w, 1 - x), Math.min(h, 1 - y)};
+    }
+
+    /** Whether every campaign has a region of its own, so each can be given its own part of the picture. Overlapping regions mean the model was guessing. */
+    static boolean canCrop(List<Panel> panels) {
+        for (Panel p : panels) if (p.region() == null) return false;
+        for (int i = 0; i < panels.size(); i++) {
+            for (int j = i + 1; j < panels.size(); j++) {
+                double[] a = panels.get(i).region(), b = panels.get(j).region();
+                double w = Math.min(a[0] + a[2], b[0] + b[2]) - Math.max(a[0], b[0]);
+                double h = Math.min(a[1] + a[3], b[1] + b[3]) - Math.max(a[1], b[1]);
+                if (w > 0 && h > 0 && w * h > 0.15 * Math.min(a[2] * a[3], b[2] * b[3])) return false;
+            }
+        }
+        return true;
+    }
+
+    private static final String LOCATE = """
+            The picture is a poster that holds several campaigns, in separate panels. A ruler has been drawn on it: coloured lines, each labelled with a
+            percentage of the picture's %AXIS% (0% at the %START%, 100% at the %END%). Using the ruler, say where each panel ends and the next begins.
+            The panels, in order from the %START% to the %END%: %NAMES%.
+            Respond with ONLY JSON: {"cuts": [..]}, %N% number(s) between 0 and 1 in ascending order (a label of 30% is 0.3): the first is where panel 1
+            ends and panel 2 begins, and so on. Place each cut exactly on the visible edge between the two panels' backgrounds.
+            """;
+
+    /**
+     * The first reading gives panel positions only roughly (it says "halfway"). For panels stacked top to bottom, or side by side, a second look at the
+     * picture with a percentage ruler drawn on it places each cut far more accurately; the cut is then snapped to the nearest real edge in the pixels.
+     * Anything that goes wrong here leaves the first answer, snapped on its own, so a poster is never refused because of this step.
+     */
+    List<Panel> refine(BufferedImage src, List<Panel> panels) {
+        boolean stacked = panels.stream().allMatch(p -> p.region()[2] > 0.85), sideBySide = panels.stream().allMatch(p -> p.region()[3] > 0.85);
+        if (stacked == sideBySide) return panels;
+        int axis = stacked ? 1 : 0;
+        List<Panel> sorted = new ArrayList<>(panels);
+        sorted.sort(java.util.Comparator.comparingDouble(p -> p.region()[axis]));
+        try {
+            byte[] ruled = jpeg(withRuler(src, stacked), 0.88f);
+            String prompt = LOCATE.replace("%AXIS%", stacked ? "height" : "width").replace("%START%", stacked ? "top" : "left").replace("%END%", stacked ? "bottom" : "right")
+                    .replace("%NAMES%", String.join("; ", sorted.stream().map(p -> p.campaign().name()).toList())).replace("%N%", String.valueOf(sorted.size() - 1));
+            Future<String> call = vision.submit(() -> chatModel.call(new Prompt(
+                    List.of(new SystemMessage(prompt), new UserMessage("Where are the cuts?", new Media(MimeTypeUtils.IMAGE_JPEG, new ByteArrayResource(ruled)))),
+                    AzureOpenAiChatOptions.builder().responseFormat(AzureOpenAiResponseFormat.JSON).temperature(0.0).maxTokens(200).build())).getResult().getOutput().getText());
+            JsonNode cuts = mapper.readTree(call.get(ATTEMPT_TIMEOUT_MS, TimeUnit.MILLISECONDS)).path("cuts");
+            if (cuts.isArray() && cuts.size() == sorted.size() - 1) {
+                double[] edges = new double[sorted.size() + 1];
+                edges[sorted.size()] = 1;
+                for (int i = 0; i < cuts.size(); i++) {
+                    edges[i + 1] = cuts.get(i).asDouble(-1);
+                    if (edges[i + 1] <= edges[i] + 0.05 || edges[i + 1] >= 0.95) throw new IllegalStateException("cuts not usable: " + cuts);
+                }
+                List<Panel> placed = new ArrayList<>();
+                for (Panel p : panels) {
+                    int i = sorted.indexOf(p);
+                    double[] r = p.region().clone();
+                    r[axis] = edges[i];
+                    r[axis + 2] = edges[i + 1] - edges[i];
+                    r[1 - axis] = 0;
+                    r[3 - axis] = 1;
+                    placed.add(new Panel(p.campaign(), r));
+                }
+                log.info("Poster panels placed by the ruler pass at {}", cuts);
+                return snapToSeams(src, placed, 0.05);
+            }
+        } catch (Exception e) {
+            log.warn("The second look at where the panels meet did not work ({}); using the first reading", e.toString());
+        }
+        return snapToSeams(src, panels);
+    }
+
+    /** A copy of the picture with a labelled line every 10% along the axis the panels are ordered by. */
+    static BufferedImage withRuler(BufferedImage src, boolean rows) {
+        BufferedImage out = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = out.createGraphics();
+        g.drawImage(src, 0, 0, null);
+        int len = rows ? src.getHeight() : src.getWidth(), across = rows ? src.getWidth() : src.getHeight();
+        g.setFont(new java.awt.Font(java.awt.Font.SANS_SERIF, java.awt.Font.BOLD, Math.max(14, len / 55)));
+        for (int pct = 10; pct <= 90; pct += 10) {
+            int at = len * pct / 100;
+            g.setColor(new Color(0, 230, 255));
+            g.setStroke(new java.awt.BasicStroke(Math.max(2f, len / 700f)));
+            if (rows) g.drawLine(0, at, across, at); else g.drawLine(at, 0, at, across);
+            String label = pct + "%";
+            int w = g.getFontMetrics().stringWidth(label) + 8, h = g.getFontMetrics().getHeight();
+            for (int k = 0; k < 2; k++) {
+                int x = rows ? (k == 0 ? 2 : across - w - 2) : at + 3, y = rows ? at - h : (k == 0 ? 2 : across - h - 2);
+                g.setColor(Color.BLACK);
+                g.fillRect(x, y, w, h);
+                g.setColor(new Color(0, 230, 255));
+                g.drawString(label, x + 4, y + g.getFontMetrics().getAscent());
+            }
+        }
+        g.dispose();
+        return out;
+    }
+
+    /**
+     * A vision model places the edge between two panels only roughly (it tends to say "halfway"). When the panels are stacked or side by side, the real edge
+     * is where the picture changes most abruptly, so each boundary is moved to the row (or column) of strongest change within 20% of where the model put it.
+     */
+    static List<Panel> snapToSeams(BufferedImage src, List<Panel> panels) { return snapToSeams(src, panels, 0.2); }
+
+    static List<Panel> snapToSeams(BufferedImage src, List<Panel> panels, double window) {
+        boolean stacked = panels.stream().allMatch(p -> p.region()[2] > 0.85), sideBySide = panels.stream().allMatch(p -> p.region()[3] > 0.85);
+        if (panels.size() < 2 || stacked == sideBySide) return panels;
+        int axis = stacked ? 1 : 0; // the coordinate the panels are ordered by
+        List<Panel> sorted = new ArrayList<>(panels);
+        sorted.sort(java.util.Comparator.comparingDouble(p -> p.region()[axis]));
+        double[] start = new double[sorted.size()], end = new double[sorted.size()];
+        for (int i = 0; i < sorted.size(); i++) {
+            start[i] = sorted.get(i).region()[axis];
+            end[i] = start[i] + sorted.get(i).region()[axis + 2];
+        }
+        for (int i = 0; i + 1 < sorted.size(); i++) {
+            double seam = seam(src, (end[i] + start[i + 1]) / 2, stacked, window);
+            end[i] = seam;
+            start[i + 1] = seam;
+        }
+        List<Panel> out = new ArrayList<>();
+        for (Panel p : panels) {
+            int i = sorted.indexOf(p);
+            double[] r = p.region().clone();
+            r[axis] = start[i];
+            r[axis + 2] = Math.max(0.05, end[i] - start[i]);
+            out.add(new Panel(p.campaign(), r));
+        }
+        return out;
+    }
+
+    /** The row (stacked) or column (side by side) near {@code guess}, as a fraction, where neighbouring lines of the picture differ most. */
+    static double seam(BufferedImage src, double guess, boolean rows, double window) {
+        int length = rows ? src.getHeight() : src.getWidth(), across = rows ? src.getWidth() : src.getHeight();
+        int lo = Math.max(1, (int) ((guess - window) * length)), hi = Math.min(length - 1, (int) ((guess + window) * length));
+        int step = Math.max(1, across / 200);
+        double best = -1;
+        int bestAt = (int) (guess * length);
+        for (int k = lo; k <= hi; k++) {
+            double diff = 0;
+            int n = 0;
+            for (int j = 0; j < across; j += step) {
+                int a = rows ? src.getRGB(j, k) : src.getRGB(k, j), b = rows ? src.getRGB(j, k - 1) : src.getRGB(k - 1, j);
+                diff += Math.abs(((a >> 16 & 255) + (a >> 8 & 255) + (a & 255)) - ((b >> 16 & 255) + (b >> 8 & 255) + (b & 255)));
+                n++;
+            }
+            if (diff / n > best) { best = diff / n; bestAt = k; }
+        }
+        return (double) bestAt / length;
+    }
+
+    /** The part of a picture a region names, with a little margin so a heading on the edge is not cut. */
+    static BufferedImage crop(BufferedImage src, double[] r) {
+        int pad = (int) Math.round(0.004 * Math.max(src.getWidth(), src.getHeight()));
+        int x = Math.max(0, (int) Math.round(r[0] * src.getWidth()) - pad), y = Math.max(0, (int) Math.round(r[1] * src.getHeight()) - pad);
+        int x2 = Math.min(src.getWidth(), (int) Math.round((r[0] + r[2]) * src.getWidth()) + pad);
+        int y2 = Math.min(src.getHeight(), (int) Math.round((r[1] + r[3]) * src.getHeight()) + pad);
+        return src.getSubimage(x, y, Math.max(1, x2 - x), Math.max(1, y2 - y));
     }
 
     /** The embeddings of a campaign: its overview, each benefit and each customer signal. */

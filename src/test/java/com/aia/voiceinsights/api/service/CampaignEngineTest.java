@@ -241,4 +241,61 @@ class CampaignEngineTest {
         assertEquals("", reading.campaignsLine("run-2"), "a failed campaign step says nothing");
         assertEquals("", reading.campaignsLine("run-3"), "an unknown run says nothing");
     }
+
+    // ── a poster that holds more than one campaign ───────────────────────────────────────────────────────────
+
+    private static String panel(String name, String region) {
+        return "{\"name\":\"" + name + "\",\"summary\":\"" + name + " summary\",\"customerSignals\":[\"wants " + name + "\"],\"region\":" + region + "}";
+    }
+
+    @Test
+    void aPosterWithTwoCampaignsGivesTwoDraftsEachWithItsOwnRegion() throws Exception {
+        var panels = reader.parseAll("{\"isCampaignPoster\":true,\"campaigns\":[" + panel("AIA Platinum Wealth", "{\"x\":0,\"y\":0,\"w\":1,\"h\":0.5}") + ","
+                + panel("AIA Vitality", "{\"x\":0,\"y\":0.5,\"w\":1,\"h\":0.5}") + "]}");
+        assertEquals(2, panels.size());
+        assertEquals("AIA Platinum Wealth", panels.get(0).campaign().name());
+        assertEquals("AIA Vitality", panels.get(1).campaign().name());
+        assertTrue(CampaignAnalysisService.canCrop(panels));
+        BufferedImage poster = new BufferedImage(1000, 1400, BufferedImage.TYPE_INT_RGB);
+        BufferedImage top = CampaignAnalysisService.crop(poster, panels.get(0).region()), bottom = CampaignAnalysisService.crop(poster, panels.get(1).region());
+        assertEquals(1000, top.getWidth());
+        assertTrue(top.getHeight() >= 700 && top.getHeight() <= 730, "half of 1400 plus a little margin, was " + top.getHeight());
+        assertTrue(bottom.getHeight() >= 700 && bottom.getHeight() <= 730);
+    }
+
+    @Test
+    void overlappingOrMissingRegionsKeepTheWholePosterForEachCampaign() throws Exception {
+        var overlapping = reader.parseAll("{\"campaigns\":[" + panel("A one", "{\"x\":0,\"y\":0,\"w\":1,\"h\":0.8}") + "," + panel("B two", "{\"x\":0,\"y\":0.2,\"w\":1,\"h\":0.8}") + "]}");
+        assertEquals(2, overlapping.size());
+        assertFalse(CampaignAnalysisService.canCrop(overlapping));
+        var missing = reader.parseAll("{\"campaigns\":[" + panel("A one", "null") + "," + panel("B two", "{\"x\":0,\"y\":0.5,\"w\":1,\"h\":0.5}") + "]}");
+        assertFalse(CampaignAnalysisService.canCrop(missing));
+    }
+
+    @Test
+    void anEntryThatCannotBeReadIsSkippedAndDuplicatesAndExtrasAreDropped() throws Exception {
+        var panels = reader.parseAll("{\"campaigns\":[" + panel("A one", "null") + ",{\"name\":\"Footer\"}," + panel("a ONE", "null") + "," + panel("B two", "null") + "," + panel("C three", "null")
+                + "," + panel("D four", "null") + "," + panel("E five", "null") + "]}");
+        assertEquals(List.of("A one", "B two", "C three", "D four"), panels.stream().map(p -> p.campaign().name()).toList());
+        assertThrows(CampaignAnalysisService.BadPoster.class, () -> reader.parseAll("{\"campaigns\":[{\"name\":\"Footer\"}]}"));
+    }
+
+    @Test
+    void aPosterWithOneCampaignIsReadAsBeforeInEitherShape() throws Exception {
+        var wrapped = reader.parseAll("{\"campaigns\":[" + panel("AIA Vitality", "{\"x\":0,\"y\":0,\"w\":1,\"h\":1}") + "]}");
+        assertEquals(1, wrapped.size());
+        assertEquals(1, reader.parseAll("{\"name\":\"AIA Vitality\",\"summary\":\"S\",\"customerSignals\":[\"wants a gym\"]}").size());
+    }
+
+    @Test
+    void aGuessedHalfwayCutMovesToTheRealEdgeBetweenThePanels() throws Exception {
+        BufferedImage poster = new BufferedImage(600, 1000, BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < 1000; y++) for (int x = 0; x < 600; x++) poster.setRGB(x, y, y < 310 ? 0x10204A : 0xE0306A);
+        var panels = reader.parseAll("{\"campaigns\":[" + panel("A one", "{\"x\":0,\"y\":0,\"w\":1,\"h\":0.5}") + "," + panel("B two", "{\"x\":0,\"y\":0.5,\"w\":1,\"h\":0.5}") + "]}");
+        var snapped = CampaignAnalysisService.snapToSeams(poster, panels);
+        assertEquals(0.31, snapped.get(0).region()[3], 0.01, "the first panel ends at the colour change");
+        assertEquals(0.31, snapped.get(1).region()[1], 0.01);
+        assertEquals(0.69, snapped.get(1).region()[3], 0.01, "the second runs to the bottom");
+        assertEquals("A one", snapped.get(0).campaign().name());
+    }
 }

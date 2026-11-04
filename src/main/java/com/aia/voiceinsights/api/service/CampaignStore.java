@@ -90,6 +90,20 @@ public class CampaignStore {
         });
     }
 
+    /** A campaign found on a poster that held several: written whole (read, with its embeddings and its own part of the poster) in one transaction. */
+    public void createAnalysed(String id, Campaign c, List<Vec> vectors, String mime, byte[] image, byte[] thumb) {
+        tx.executeWithoutResult(s -> {
+            jdbc.update("INSERT INTO %s.campaigns (id, name, status, analysis_status) VALUES (?, ?, 'DRAFT', 'ANALYZING')".formatted(schema), id, c.name());
+            jdbc.update("INSERT INTO %s.campaign_images (campaign_id, mime, data, thumb) VALUES (?, ?, ?, ?)".formatted(schema), id, mime, image, thumb);
+            saveAnalysis(id, c, vectors);
+        });
+    }
+
+    /** The picture of a campaign whose poster turned out to hold several: it keeps only its own part. */
+    public void replaceImage(String id, byte[] image, byte[] thumb) {
+        jdbc.update("UPDATE %s.campaign_images SET mime = 'image/jpeg', data = ?, thumb = ? WHERE campaign_id = ?".formatted(schema), image, thumb, id);
+    }
+
     public void markFailed(String id, String error) {
         jdbc.update("UPDATE %s.campaigns SET analysis_status = 'FAILED', analysis_error = ?, updated_at = now() WHERE id = ?".formatted(schema),
                 error == null ? "The poster could not be read." : error.substring(0, Math.min(400, error.length())), id);
