@@ -117,7 +117,7 @@ public class ProfileExtractionService {
             var response = chatModel.call(new Prompt(
                     List.of(new SystemMessage(debrief ? SYSTEM_PROMPT + DEBRIEF_ADDENDUM + (junoDebrief ? JUNO_DEBRIEF_NOTE : "") : SYSTEM_PROMPT),
                             new UserMessage("Transcript so far:\n" + transcript)),
-                    AzureOpenAiChatOptions.builder().responseFormat(JSON_FORMAT).build()));
+                    AzureOpenAiChatOptions.builder().responseFormat(JSON_FORMAT).temperature(0.0).seed(42L).build()));
 
             JsonNode root = mapper.readTree(response.getResult().getOutput().getText());
 

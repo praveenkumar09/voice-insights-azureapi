@@ -36,7 +36,7 @@ public class JunoSpeechService {
 
     private static final Map<String, String> TONES = Map.of(
             "warm", "Friendly and warm, with a gentle smile in your voice.",
-            "gentle", "Soft, gentle and reassuring: the person has just shared something worrying or personal, so slow down a little and show you care.",
+            "gentle", "Gentle and reassuring: the person has just shared something worrying or personal, so show you care, at the same pace and pitch as always.",
             "upbeat", "Bright and genuinely pleased for them, light and encouraging.",
             "curious", "Interested and curious, light, inviting them to tell you more.",
             "reassuring", "Calm, steady and reassuring.");
@@ -50,6 +50,8 @@ public class JunoSpeechService {
     @Value("${AZURE_OPENAI_API_KEY:}") private String mainApiKey;
     @Value("${juno.tts.voice.female:coral}") private String voiceFemale;
     @Value("${juno.tts.voice.male:ash}") private String voiceMale;
+    /** Speaking speed sent to the speech model (1.0 = normal). The same for every line, so the voice never changes pace. */
+    @Value("${juno.tts.speed:1.2}") private double speed;
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
     private final ObjectMapper mapper = new ObjectMapper();
@@ -89,6 +91,7 @@ public class JunoSpeechService {
             body.put("voice", voice);
             body.put("instructions", BASE + " " + TONES.get(toneKey)
                     + ("en".equals(code) ? "" : " Speak " + JunoPhrases.of(code).language() + " naturally, like a native speaker, keeping 'AIA' and product names in English."));
+            body.put("speed", Math.max(0.5, Math.min(2.0, speed)));
             body.put("response_format", "mp3");
             String ep = endpoint();
             String base = ep.endsWith("/") ? ep.substring(0, ep.length() - 1) : ep;
@@ -99,9 +102,9 @@ public class JunoSpeechService {
                     .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body), StandardCharsets.UTF_8))
                     .build();
             HttpResponse<byte[]> res = http.send(req, HttpResponse.BodyHandlers.ofByteArray());
-            if (res.statusCode() == 429 || res.statusCode() >= 500) {
-                // Busy or a blip: one more try, so a single hiccup never changes the voice mid-conversation.
-                Thread.sleep(600);
+            // Busy or a blip: up to two more tries, so a single hiccup never makes the app drop to a different (browser) voice mid-conversation.
+            for (int retry = 1; retry <= 2 && (res.statusCode() == 429 || res.statusCode() >= 500); retry++) {
+                Thread.sleep(500L * retry);
                 res = http.send(req, HttpResponse.BodyHandlers.ofByteArray());
             }
             if (res.statusCode() != 200) {

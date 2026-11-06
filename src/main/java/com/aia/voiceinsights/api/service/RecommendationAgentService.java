@@ -949,10 +949,43 @@ public class RecommendationAgentService {
         throw new RuntimeException("LLM call failed after " + MAX_ATTEMPTS + " attempts", lastError);
     }
 
+    /**
+     * Answers already given for an exact prompt. The same debrief therefore always gets the same suggestion: with temperature 0 and a
+     * fixed seed the model is nearly repeatable, and this cache makes it exact for identical input. Holds the raw JSON, so every caller
+     * parses its own copy. Bounded so it can never grow without end.
+     */
+    private static final int MAX_MEMO = 600;
+    private final Map<String, String> memo = java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>(64, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, String> e) { return size() > MAX_MEMO; }
+    });
+
+    public void clearMemo() { memo.clear(); }
+
+    private static String memoKey(String system, String user) {
+        try {
+            var md = java.security.MessageDigest.getInstance("SHA-256");
+            md.update(system.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            md.update((byte) 0);
+            md.update(user.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(md.digest());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private <T> T callOnce(String systemPrompt, String userMessage, Class<T> type) throws Exception {
+        String key = memoKey(systemPrompt, userMessage);
+        String cached = key == null ? null : memo.get(key);
+        if (cached != null) {
+            try {
+                return mapper.readValue(cached, type);
+            } catch (Exception ignored) {
+                memo.remove(key); // fall through to a fresh call
+            }
+        }
         var future = llmExecutor.submit(() -> chatModel.call(new Prompt(
                 List.of(new SystemMessage(systemPrompt + Wording.PROMPT_RULE), new UserMessage(userMessage)),
-                AzureOpenAiChatOptions.builder().responseFormat(JSON_FORMAT).build())));
+                AzureOpenAiChatOptions.builder().responseFormat(JSON_FORMAT).temperature(0.0).seed(42L).build())));
 
         ChatResponse response;
         try {
@@ -966,7 +999,9 @@ public class RecommendationAgentService {
 
         String text = response.getResult().getOutput().getText();
         try {
-            return mapper.readValue(text, type);
+            T parsed = mapper.readValue(text, type);
+            if (key != null) memo.put(key, text);
+            return parsed;
         } catch (Exception e) {
             throw new RuntimeException("Failed to parse agent JSON response: " + text, e);
         }
