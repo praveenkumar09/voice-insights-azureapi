@@ -839,11 +839,25 @@ public class AzureOpenAiRealtimeTranscriptionClient {
     /** The hint that lets Mandarin, Malay and Tamil words stay in their own language also makes noise sound like fluent sentences, so such a session is stricter. */
     private static final double MIN_MEAN_LOGPROB_MIXED_HINT = -0.75;
 
+    private static final double MIN_MEAN_LOGPROB_HANDOVER = -2.2;
+
+    /** A short line that hands the dictation over ("Spark, over to you", "your turn", "go ahead"). */
+    static boolean isHandoverLine(List<String> said) {
+        if (said.isEmpty() || said.size() > 6) return false;
+        String j = " " + String.join(" ", said) + " ";
+        return j.contains(" over to you ") || j.contains(" your turn ") || j.contains(" go ahead ");
+    }
+
     private boolean isInvented(String transcript, double meanLogprob) {
         String p = prompt;
         boolean mixedHint = p != null && p.contains("never translate");
-        if (meanLogprob < (mixedHint ? MIN_MEAN_LOGPROB_MIXED_HINT : MIN_MEAN_LOGPROB)) return true;
         List<String> said = words(transcript);
+        // "Spark, over to you": the phrase that ends a dictation. A short, isolated phrase is heard with less confidence than a sentence (and the
+        // name can be misheard: "Psst, over to you" scored -1.62), so it gets a much looser bar. This is safe because the browser only acts on it
+        // when real dictation came before it, and made-up text from noise is never shaped like this phrase.
+        boolean handover = !commandMode && !confirming && isHandoverLine(said);
+        if (meanLogprob < (handover ? MIN_MEAN_LOGPROB_HANDOVER : mixedHint ? MIN_MEAN_LOGPROB_MIXED_HINT : MIN_MEAN_LOGPROB)) return true;
+        if (handover) return false; // made of prompt words, but it is what the advisor said, not the model reading the prompt back
         // While Spark waits for a yes, a stray "Yes." heard from noise must not be taken for the advisor's answer: a real one is heard at about
         // -0.02 to -0.07, noise at -0.18 or worse. A real answer that falls short is harmless: Spark says it did not hear a yes and does nothing.
         if (confirming && said.size() <= 4 && meanLogprob < MIN_MEAN_LOGPROB_FOR_ANSWER) return true;

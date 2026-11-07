@@ -227,6 +227,9 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             + "Write each word in the language it was spoken in, and never translate. "
             + "For example: 女儿 (daughter), 退休 (retirement), 保险 (insurance), 不过 (but), isteri (wife), anak (child), amma (mother), pillai (child).";
 
+    /** Says who the advisor is talking to, and the phrase that ends a dictation, so both are spelled and not guessed. */
+    static final String SPARK_NAME_HINT = " Spark is the assistant's name: the advisor may end the dictation by saying \"Spark, over to you.\"";
+
     /** The English-session hint for the selected business unit: Singapore's is above; another unit's names its own country and the languages it offers. */
     public static String mixedLanguageHint() {
         var bu = com.aia.voiceinsights.api.service.BusinessUnits.current();
@@ -251,7 +254,8 @@ public class VoiceWebSocketHandler extends AbstractWebSocketHandler {
             return transcriptionPrompt((name + (dynamic == null ? "" : dynamic)).trim());
         }
         if (!"JUNO_DEBRIEF".equals(vs.profile.getCaptureMode())) return transcriptionPrompt(dynamic);
-        if ("en".equals(vs.lang)) return mixedLanguageHint();
+        // The assistant's name is given, as in Spark mode: without it "Spark, over to you" was heard as "Psst, over to you" and the hand-over was lost.
+        if ("en".equals(vs.lang)) return mixedLanguageHint() + SPARK_NAME_HINT;
         String own = com.aia.voiceinsights.api.service.Languages.of(vs.lang).sttPrompt();
         if (own != null) return own;
         return "The advisor is speaking " + com.aia.voiceinsights.api.service.JunoPhrases.of(vs.lang).language()
